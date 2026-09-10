@@ -8,9 +8,12 @@ Because the cookie travels automatically, every mutating request must also
 carry the X-CSRF-Token header, which the client reads from GET /v1/session.
 """
 
+import json
 import os
+import re
 import secrets
 import time
+from datetime import datetime
 from functools import wraps
 from urllib.parse import urlencode
 
@@ -29,7 +32,7 @@ from flask_login import current_user, login_user, logout_user
 
 from ..crypto import EncryptionNotConfigured, encrypt, mask
 from ..extensions import db
-from ..files import extract, safe_name
+from ..files import extract, safe_name, sniff_image
 from ..models import (
     Agent,
     Attachment,
@@ -46,6 +49,7 @@ from ..providers import (
     SUGGESTED_MODELS,
     ProviderError,
     get_provider,
+    provider_label,
 )
 from ..rendering import render
 from ..routes.auth import EMAIL_RE
@@ -113,6 +117,13 @@ def agent_json(a):
     return {
         "id": a.id,
         "name": a.name,
+        "avatar_preset": a.avatar_preset,
+        # A cache-busting suffix, so a replaced image shows up immediately
+        # instead of the browser holding the old one.
+        "avatar_url": (
+            f"/v1/agents/{a.id}/avatar?v={a.id}-{len(a.avatar_path)}"
+            if a.has_avatar else None
+        ),
         "provider": a.provider,
         "model": a.model,
         "role": a.role,
@@ -355,9 +366,13 @@ def create_agent():
 
     try:
         temperature = float(data.get("temperature", 0.7))
-        max_tokens = int(data.get("max_tokens", 1200))
+        max_tokens = int(data.get("max_tokens", 4000))
     except (TypeError, ValueError):
         return fail("Temperature and max tokens must be numbers.")
+
+    preset = data.get("avatar_preset")
+    if preset and preset not in Agent.AVATAR_PRESETS:
+        return fail("That is not one of the built-in avatars.")
 
     count = Agent.query.filter_by(user_id=current_user.id).count()
     agent = Agent(
@@ -369,12 +384,84 @@ def create_agent():
         role=(data.get("role") or "").strip()[:120],
         system_prompt=(data.get("system_prompt") or "").strip(),
         temperature=min(max(temperature, 0.0), 2.0),
-        max_tokens=min(max(max_tokens, 200), 8000),
+        max_tokens=min(max(max_tokens, 200), 32000),
         color=SEAT_COLORS[count % len(SEAT_COLORS)],
+        avatar_preset=preset or "monogram",
+        web_search=bool(data.get("web_search")),
     )
     db.session.add(agent)
     db.session.commit()
     return jsonify({"agent": agent_json(agent)}), 201
+
+
+@bp.patch("/agents/<int:agent_id>")
+@auth_required
+def update_agent(agent_id):
+    """Change an existing agent. Takes effect on its next turn.
+
+    Editing rather than deleting matters: an agent's id is referenced by every
+    turn it has taken, so deleting one to change a number would orphan its
+    history in past conversations.
+    """
+    agent = db.session.get(Agent, agent_id)
+    if agent is None or agent.user_id != current_user.id or agent.archived:
+        abort(404)
+
+    data = body()
+
+    if "name" in data:
+        name = (data.get("name") or "").strip()
+        if not name:
+            return fail("Give the agent a name — the others address it by name.")
+        agent.name = name[:60]
+
+    if "provider" in data:
+        if data["provider"] not in REGISTRY:
+            return fail("Pick a provider.")
+        agent.provider = data["provider"]
+
+    if "model" in data:
+        model = (data.get("model") or "").strip()
+        if not model:
+            return fail("Enter a model name.")
+        agent.model = model[:120]
+
+    if "credential_id" in data:
+        raw = data["credential_id"]
+        if raw:
+            credential = db.session.get(Credential, int(raw))
+            if credential is None or credential.user_id != current_user.id:
+                abort(404)
+            if credential.provider != agent.provider:
+                return fail("That key belongs to a different provider.")
+            agent.credential_id = credential.id
+        else:
+            agent.credential_id = None
+
+    if "avatar_preset" in data:
+        preset = data["avatar_preset"]
+        if preset not in Agent.AVATAR_PRESETS:
+            return fail("That is not one of the built-in avatars.")
+        agent.avatar_preset = preset
+
+    if "web_search" in data:
+        agent.web_search = bool(data["web_search"])
+
+    if "role" in data:
+        agent.role = (data.get("role") or "").strip()[:120]
+    if "system_prompt" in data:
+        agent.system_prompt = (data.get("system_prompt") or "").strip()
+
+    try:
+        if "temperature" in data:
+            agent.temperature = min(max(float(data["temperature"]), 0.0), 2.0)
+        if "max_tokens" in data:
+            agent.max_tokens = min(max(int(data["max_tokens"]), 200), 32000)
+    except (TypeError, ValueError):
+        return fail("Temperature and max tokens must be numbers.")
+
+    db.session.commit()
+    return jsonify({"agent": agent_json(agent)})
 
 
 @bp.delete("/agents/<int:agent_id>")
@@ -1120,4 +1207,243 @@ def download_file(file_id):
         attachment.stored_path,
         as_attachment=True,
         download_name=attachment.filename,
+    )
+
+
+
+# ----------------------------------------------------------------- avatars
+def _avatar_dir():
+    path = os.path.join(current_app.config.get("UPLOAD_DIR") or "uploads", "avatars")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _owned_agent(agent_id):
+    agent = db.session.get(Agent, agent_id)
+    if agent is None or agent.user_id != current_user.id:
+        abort(404)
+    return agent
+
+
+@bp.post("/agents/<int:agent_id>/avatar")
+@auth_required
+def upload_avatar(agent_id):
+    agent = _owned_agent(agent_id)
+
+    item = request.files.get("file")
+    if item is None or not item.filename:
+        return fail("Pick an image first.")
+
+    data = item.read()
+    identified, reason = sniff_image(data)
+    if identified is None:
+        return fail(reason)
+    mime, extension = identified
+
+    previous = agent.avatar_path
+    try:
+        name = f"agent-{agent.id}-{secrets.token_hex(6)}{extension}"
+        path = os.path.join(_avatar_dir(), name)
+        with open(path, "wb") as handle:
+            handle.write(data)
+    except OSError as exc:
+        current_app.logger.warning("Could not store avatar: %s", exc)
+        return fail("Could not save that image on the server.", 500)
+
+    agent.avatar_path = path
+    agent.avatar_mime = mime
+    db.session.commit()
+
+    # Only remove the old file once the new one is safely recorded.
+    if previous and previous != path:
+        try:
+            os.remove(previous)
+        except OSError:
+            pass
+
+    return jsonify({"agent": agent_json(agent)})
+
+
+@bp.delete("/agents/<int:agent_id>/avatar")
+@auth_required
+def delete_avatar(agent_id):
+    agent = _owned_agent(agent_id)
+    if agent.avatar_path:
+        try:
+            os.remove(agent.avatar_path)
+        except OSError:
+            pass
+    agent.avatar_path = ""
+    agent.avatar_mime = ""
+    db.session.commit()
+    return jsonify({"agent": agent_json(agent)})
+
+
+@bp.get("/agents/<int:agent_id>/avatar")
+@auth_required
+def get_avatar(agent_id):
+    agent = _owned_agent(agent_id)
+    if not agent.avatar_path or not os.path.isfile(agent.avatar_path):
+        abort(404)
+    return send_file(
+        agent.avatar_path,
+        mimetype=agent.avatar_mime or "image/png",
+        max_age=86400,
+    )
+
+
+# ------------------------------------------------------------------ export
+def _filename(stem, extension):
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", stem).strip("-") or "chat"
+    stamp = datetime.utcnow().strftime("%Y%m%d-%H%M")
+    return f"{safe[:60]}-{stamp}.{extension}"
+
+
+def _topic_markdown(discussion, level=2):
+    """One topic as readable Markdown."""
+    hashes = "#" * level
+    lines = [
+        f"{hashes} {discussion.question.splitlines()[0][:120]}",
+        "",
+        f"*{discussion.mode} · {discussion.status} · started "
+        f"{discussion.created_at.strftime('%Y-%m-%d %H:%M')} UTC*",
+        "",
+    ]
+
+    if discussion.attachments:
+        lines.append(f"{hashes}# Files")
+        lines.append("")
+        for f in discussion.attachments:
+            detail = (
+                f"{f.extract_chars:,} characters read"
+                + (", truncated" if f.truncated else "")
+                if f.readable else f"not readable — {f.note}"
+            )
+            lines.append(f"- **{f.filename}** — {detail}")
+        lines.append("")
+
+    for m in discussion.messages:
+        if m.role == "question":
+            lines += [f"{hashes}# {m.speaker}", "", m.content, ""]
+        elif m.role == "turn":
+            lines += [
+                f"{hashes}# {m.speaker}",
+                "",
+                f"*{provider_label(m.provider)} · {m.model}*",
+                "",
+                m.content,
+                "",
+            ]
+        elif m.role == "error":
+            lines += [f"{hashes}# {m.speaker} — failed", "", f"> {m.content}", ""]
+        elif m.role == "note":
+            lines += [f"*{m.content}*", ""]
+
+    return "\n".join(lines)
+
+
+def _topic_json(discussion):
+    return {
+        "id": discussion.id,
+        "question": discussion.question,
+        "mode": discussion.mode,
+        "status": discussion.status,
+        "created_at": discussion.created_at.isoformat() + "Z",
+        "files": [f.as_dict() for f in discussion.attachments],
+        "messages": [
+            {
+                "id": m.id,
+                "role": m.role,
+                "speaker": m.speaker,
+                "provider": m.provider,
+                "model": m.model,
+                "content": m.content,
+                "latency_ms": m.latency_ms,
+                "input_chars": m.input_chars,
+                "created_at": m.created_at.isoformat() + "Z",
+            }
+            for m in discussion.messages
+        ],
+    }
+
+
+def _download(body, filename, mimetype):
+    return current_app.response_class(
+        body,
+        mimetype=mimetype,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@bp.get("/discussions/<int:discussion_id>/export")
+@auth_required
+def export_topic(discussion_id):
+    discussion = owned_discussion(discussion_id)
+    fmt = request.args.get("format", "md")
+
+    if fmt == "json":
+        payload = {
+            "chat": discussion.group.name,
+            "exported_at": datetime.utcnow().isoformat() + "Z",
+            "topic": _topic_json(discussion),
+        }
+        return _download(
+            json.dumps(payload, indent=2, ensure_ascii=False),
+            _filename(discussion.group.name, "json"),
+            "application/json",
+        )
+
+    body = f"# {discussion.group.name}\n\n" + _topic_markdown(discussion)
+    return _download(
+        body, _filename(discussion.group.name, "md"), "text/markdown; charset=utf-8"
+    )
+
+
+@bp.get("/groups/<int:group_id>/export")
+@auth_required
+def export_chat(group_id):
+    """Every topic in the chat, oldest first."""
+    group = owned_group(group_id)
+    topics = sorted(group.discussions, key=lambda d: d.id)
+    fmt = request.args.get("format", "md")
+
+    if fmt == "json":
+        payload = {
+            "chat": group.name,
+            "purpose": group.purpose,
+            "exported_at": datetime.utcnow().isoformat() + "Z",
+            "agents": [agent_json(a) for a in group.seated_agents],
+            "topics": [_topic_json(d) for d in topics],
+        }
+        return _download(
+            json.dumps(payload, indent=2, ensure_ascii=False),
+            _filename(group.name, "json"),
+            "application/json",
+        )
+
+    lines = [f"# {group.name}", ""]
+    if group.purpose:
+        lines += [group.purpose, ""]
+    lines += [
+        "In the room: "
+        + ", ".join(
+            f"{a.name} ({provider_label(a.provider)} · {a.model})"
+            for a in group.seated_agents
+        ),
+        "",
+        f"*Exported {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC · "
+        f"{len(topics)} topic(s)*",
+        "",
+        "---",
+        "",
+    ]
+    for topic in topics:
+        lines.append(_topic_markdown(topic))
+        lines += ["", "---", ""]
+
+    return _download(
+        "\n".join(lines), _filename(group.name, "md"), "text/markdown; charset=utf-8"
     )

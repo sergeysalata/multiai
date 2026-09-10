@@ -180,6 +180,8 @@ def register_cli(app):
             ("users", "avatar_url"): "sql/002_google_auth.sql",
             ("discussions", "mode"): "sql/003_rooms.sql",
             ("attachments", "extracted"): "sql/004_files.sql",
+            ("agents", "avatar_preset"): "sql/005_avatars.sql",
+            ("agents", "web_search"): "sql/006_tools.sql",
         }
         found = set(
             db.session.execute(

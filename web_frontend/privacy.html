@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy policy — multiai</title>
+<meta name="description" content="What multiai.online stores, who it sends your messages to, and how to delete everything.">
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/app.css">
+<link rel="stylesheet" href="/assets/legal.css">
+</head>
+<body>
+
+<header class="masthead">
+  <a class="wordmark" href="/">
+    <span class="seats" aria-hidden="true"><i></i><i></i><i></i></span>
+    multiai
+  </a>
+  <nav class="nav">
+    <a href="/terms.html">Terms</a>
+    <a href="/">Open the app</a>
+  </nav>
+</header>
+
+<main class="wrap wrap--legal">
+  <h1>Privacy policy</h1>
+  <p class="legal-date">Last updated 10 September 2026</p>
+
+  <p class="legal-lede">multiai.online lets you put several AI models in one
+  room and talk to them together. To do that it stores your account, your
+  conversations and the files you share, and it sends what you write to the AI
+  vendors you have chosen. This page says exactly what that means.</p>
+
+  <h2>Who runs this service</h2>
+  <p>multiai.online is operated by the site owner, who is also the data
+  controller. Questions or requests about your data go to
+  <a href="mailto:privacy@multiai.online">privacy@multiai.online</a>.</p>
+
+  <h2>What is stored</h2>
+
+  <h3>Your account</h3>
+  <p>An email address, a display name, and — if you sign in with Google — the
+  account identifier Google gives us and the URL of your profile picture. If
+  you register with a password instead, we store a hash of it, never the
+  password itself. Accounts created through Google have no password stored at
+  all.</p>
+
+  <h3>Your conversations</h3>
+  <p>Everything written in a chat is kept: your messages, every reply from
+  every agent, timestamps, and technical details such as how long a model took
+  and how much text it was sent. This is what makes a conversation still be
+  there when you come back to it.</p>
+
+  <h3>Files you upload</h3>
+  <p>Files shared into a chat are stored on the server, along with the text
+  extracted from them. That text is sent to the agents in the room. Uploaded
+  images used as agent avatars are stored too.</p>
+
+  <h3>Provider API keys</h3>
+  <p>Keys you add for Anthropic, OpenAI, Google or your own endpoint are
+  encrypted before they are written to the database, using a key held
+  separately from it. Only the first and last few characters are ever shown
+  back to you. A copy of the database on its own does not reveal them.</p>
+
+  <h3>Logs</h3>
+  <p>The server writes ordinary operational logs: requests, errors, and a
+  record of each turn in a conversation — which agent spoke, how long it took,
+  whether it failed. Logs rotate and are overwritten in the normal course of
+  running the service.</p>
+
+  <h2>Who your messages are sent to</h2>
+  <p class="legal-callout">This is the part worth reading carefully. When an
+  agent takes a turn, the contents of that conversation — your messages, the
+  other agents' replies, and any files you have shared — are sent to that
+  agent's vendor over the internet, so the model can produce a reply. There is
+  no way to run this service without that happening.</p>
+
+  <p>Which vendor receives it depends on which agents you seat in a chat. That
+  may be Anthropic, OpenAI, Google, or any provider whose endpoint you have
+  configured yourself. Each of them handles your data under their own terms and
+  privacy policy, not this one:</p>
+  <ul>
+    <li><a href="https://www.anthropic.com/legal/privacy" rel="noopener" target="_blank">Anthropic</a></li>
+    <li><a href="https://openai.com/policies/privacy-policy/" rel="noopener" target="_blank">OpenAI</a></li>
+    <li><a href="https://policies.google.com/privacy" rel="noopener" target="_blank">Google</a></li>
+  </ul>
+  <p>If an agent has web search switched on, its vendor also performs searches
+  on its behalf, which means the search terms the model chooses leave that
+  vendor's systems.</p>
+
+  <p>Nothing is sent anywhere else. There is no analytics, no advertising, no
+  tracking, and your conversations are not sold, shared or used to train
+  anything by this service.</p>
+
+  <h2>Cookies</h2>
+  <p>One cookie, which keeps you signed in. It is not used for tracking and
+  there are no third-party cookies. Fonts are loaded from Google Fonts, which
+  means your browser contacts Google's servers to fetch them.</p>
+
+  <h2>Google sign-in</h2>
+  <p>If you sign in with Google, we ask for three things and nothing more: that
+  you are signed in (<code>openid</code>), your email address, and your basic
+  profile — name and picture. We do not request access to Gmail, Drive,
+  Calendar, contacts, or anything else in your Google account, and could not
+  reach them if we wanted to. You can revoke this at any time from your
+  <a href="https://myaccount.google.com/permissions" rel="noopener" target="_blank">Google account permissions</a>.</p>
+
+  <h2>How long things are kept</h2>
+  <p>Your chats, files and keys stay until you delete them or delete your
+  account. Deleting a chat removes its messages and its files. Deleting your
+  account removes everything belonging to it. Deletion here is permanent; there
+  is no recycle bin, and once your provider keys are gone they cannot be
+  recovered.</p>
+
+  <h2>Your rights</h2>
+  <p>You can see, correct, export or delete your data. Export is built in —
+  every chat downloads as Markdown or JSON from inside the app. For anything
+  else, or to have your whole account removed, write to
+  <a href="mailto:privacy@multiai.online">privacy@multiai.online</a> and it will
+  be dealt with within 30 days. If you are in the EU or UK you also have the
+  right to complain to your national data protection authority.</p>
+
+  <h2>Security, honestly stated</h2>
+  <p>Traffic is encrypted in transit, provider keys are encrypted at rest,
+  passwords are hashed, and each account can only reach its own data. That is a
+  reasonable standard of care, not a guarantee: no service can promise it will
+  never be breached. Treat this the way you would any small self-hosted tool —
+  useful for work you would be comfortable having on a server you do not
+  personally administer.</p>
+
+  <h2>Children</h2>
+  <p>This service is not intended for anyone under 16.</p>
+
+  <h2>Changes</h2>
+  <p>If this policy changes in a way that affects what happens to your data,
+  the date at the top changes and the change is described here. Continuing to
+  use the service after that means you accept the updated policy.</p>
+
+  <p class="legal-foot">Contact:
+  <a href="mailto:privacy@multiai.online">privacy@multiai.online</a> ·
+  <a href="/terms.html">Terms of service</a></p>
+</main>
+
+</body>
+</html>

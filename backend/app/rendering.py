@@ -14,6 +14,8 @@ import re
 import bleach
 import markdown as md
 
+from .text_cleanup import clean as clean_output
+
 ALLOWED_TAGS = [
     "p", "br", "strong", "em", "code", "pre", "blockquote",
     "ul", "ol", "li", "h3", "h4", "h5", "hr", "table", "thead",
@@ -27,6 +29,13 @@ PLACEHOLDER_RE = re.compile(r"zzmathzz(\d+)zz")
 
 # Ordered: longest delimiters first, so $$ is not read as two $.
 MATH_PATTERNS = [
+    # \begin{align} … \end{align} and friends, kept whole so KaTeX sees the
+    # environment rather than a fragment of one.
+    (re.compile(
+        r"(\\begin\{(?:align|aligned|equation|gather|gathered|split|array|"
+        r"matrix|pmatrix|bmatrix|cases)\*?\}.+?\\end\{(?:align|aligned|"
+        r"equation|gather|gathered|split|array|matrix|pmatrix|bmatrix|cases)"
+        r"\*?\})", re.S), True),
     (re.compile(r"\\\[(.+?)\\\]", re.S), True),    # \[ ... \]
     (re.compile(r"\$\$(.+?)\$\$", re.S), True),    # $$ ... $$
     (re.compile(r"\\\((.+?)\\\)", re.S), False),   # \( ... \)
@@ -81,8 +90,10 @@ def _restore_math(html, store):
 
 
 def render(text: str) -> str:
+    # Also applied here, not only at the provider boundary, so conversations
+    # stored before the markers were understood display correctly too.
     store = []
-    protected = _extract_math(text or "", store)
+    protected = _extract_math(clean_output(text or ""), store)
 
     html = md.markdown(
         protected,

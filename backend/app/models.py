@@ -91,8 +91,16 @@ class Agent(db.Model):
     role = db.Column(db.String(120), nullable=False, default="")
     system_prompt = db.Column(db.Text, nullable=False, default="")
     temperature = db.Column(db.Float, nullable=False, default=0.7)
-    max_tokens = db.Column(db.Integer, nullable=False, default=1200)
+    max_tokens = db.Column(db.Integer, nullable=False, default=4000)
     color = db.Column(db.String(16), nullable=False, default="#2F2BA8")
+    # Either an uploaded image, or one of the patterns the browser draws from
+    # `color`. The preset costs no storage and no request.
+    avatar_path = db.Column(db.String(512), nullable=False, default="")
+    avatar_mime = db.Column(db.String(60), nullable=False, default="")
+    avatar_preset = db.Column(db.String(32), nullable=False, default="monogram")
+    # The vendor's own server-side search. Off by default: an agent that can
+    # search and others that cannot is not a fair room.
+    web_search = db.Column(db.Boolean, nullable=False, default=False)
     archived = db.Column(db.Boolean, nullable=False, default=False)
     created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
 
@@ -102,6 +110,12 @@ class Agent(db.Model):
         "GroupMember", back_populates="agent", cascade="all, delete-orphan"
     )
 
+    AVATAR_PRESETS = ("monogram", "rings", "bars", "grid", "dots", "chevron")
+
+    @property
+    def has_avatar(self):
+        return bool(self.avatar_path)
+
     def as_dict(self):
         return {
             "id": self.id,
@@ -110,6 +124,9 @@ class Agent(db.Model):
             "model": self.model,
             "role": self.role,
             "color": self.color,
+            "avatar_preset": self.avatar_preset,
+            "has_avatar": self.has_avatar,
+            "web_search": self.web_search,
         }
 
 

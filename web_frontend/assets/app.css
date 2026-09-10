@@ -488,3 +488,82 @@ input:focus, select:focus, textarea:focus { border-color: var(--indigo); outline
 .seat-move button:last-child { border-radius: 0 0 3px 3px; margin-top: -1px; }
 .seat-move button:hover:not(:disabled) { background: #e6e9ed; color: var(--ink); }
 .seat-move button:disabled { opacity: .3; cursor: default; }
+
+/* ------------------------------------------------------------- avatars --- */
+.avatar-img {
+  border-radius: 50%; display: block; flex: none;
+  object-fit: cover; background: var(--rule);
+}
+
+.roster li { gap: 10px; }
+.roster .avatar-img { align-self: center; }
+
+.turn__face { display: flex; align-items: center; gap: 8px; }
+.turn__face b { margin: 0; }
+.turn__who { padding-left: 0; }
+.turn__who::before { display: none; }
+.turn__who > span { display: block; margin-left: 34px; }
+.turn__meta { margin-left: 34px; }
+
+.turn--question .turn__who,
+.turn--error .turn__who { padding-left: 14px; }
+.turn--question .turn__who::before,
+.turn--error .turn__who::before { display: block; }
+.turn--question .turn__who > span,
+.turn--error .turn__who > span { margin-left: 0; }
+
+.avatar-picker { display: flex; align-items: center; gap: 14px; }
+.avatar-current { flex: none; }
+.avatar-choices { display: flex; flex-wrap: wrap; gap: 6px; }
+.avatar-choice {
+  border: 1px solid transparent; background: none; padding: 2px;
+  border-radius: 50%; cursor: pointer; line-height: 0;
+}
+.avatar-choice:hover { border-color: var(--rule-strong); }
+.avatar-choice.active { border-color: var(--ink); }
+.avatar-actions { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+
+/* ---------------------------------------------------------- chat rows --- */
+.chat-row { display: flex; align-items: stretch; gap: 8px; }
+.chat-row a { flex: 1; }
+.chat-row button { align-self: center; }
+
+/* -------------------------------------------------------------- export --- */
+.export-block {
+  margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--rule);
+}
+.export-row {
+  display: flex; align-items: baseline; gap: 12px;
+  font-size: .8rem; padding: 3px 0;
+}
+.export-row span { min-width: 84px; }
+.export-row span { color: var(--ink-faint); }
+.export-row a { color: var(--indigo); text-decoration: underline;
+  text-underline-offset: 2px; }
+.export-row a:hover { color: var(--ink); }
+
+/* --------------------------------------------------------- chat header --- */
+.chat-actions {
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  margin: -8px 0 20px; font-size: .8rem;
+}
+.chat-actions span { color: var(--ink-faint); }
+.chat-actions a {
+  color: var(--indigo); text-decoration: underline; text-underline-offset: 2px;
+}
+.chat-actions a:hover { color: var(--ink); }
+
+/* -------------------------------------------------------------- toggle --- */
+label.check {
+  display: flex; align-items: center; gap: 9px;
+  color: var(--ink); font-size: .95rem; margin-bottom: 0; cursor: pointer;
+}
+label.check input { width: auto; margin: 0; }
+
+/* ---------------------------------------------------------------- foot --- */
+.site-foot {
+  display: flex; gap: 18px; justify-content: center;
+  padding: 28px 16px 40px; font-size: .8rem;
+}
+.site-foot a { color: var(--ink-faint); text-decoration: none; }
+.site-foot a:hover { color: var(--ink); text-decoration: underline; }

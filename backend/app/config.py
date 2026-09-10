@@ -134,14 +134,19 @@ class Config:
         self.MAX_FLOW_TURNS = int(limits.get("max_flow_turns", 40))
         # Per file, and for all files put together in one prompt. Files can
         # dwarf the conversation, so they get their own budget.
-        self.MAX_FILE_CHARS = int(limits.get("max_file_chars", 20000))
-        self.MAX_FILES_CHARS_TOTAL = int(limits.get("max_files_chars_total", 40000))
+        self.MAX_FILE_CHARS = int(limits.get("max_file_chars", 200000))
+        self.MAX_FILES_CHARS_TOTAL = int(limits.get("max_files_chars_total", 400000))
+        self.MAX_DOCUMENT_BYTES = int(limits.get("max_document_bytes", 24 * 1024 * 1024))
         self.MAX_FILES_PER_TOPIC = int(limits.get("max_files_per_topic", 10))
 
         storage = raw.get("storage", {})
         self.UPLOAD_DIR = storage.get("upload_dir") or str(ROOT / "uploads")
 
         # --- optional server-wide provider keys ---
+        # Send PDFs to the vendor as real documents rather than as extracted
+        # text, where the vendor supports it. Keeps tables and layout.
+        self.NATIVE_DOCUMENTS = bool(providers.get("native_documents", True))
+
         self.FALLBACK_KEYS = {
             k: (v or "") for k, v in (providers.get("fallback_keys") or {}).items()
         }

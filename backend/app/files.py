@@ -141,3 +141,36 @@ def extract(filename, data, limit_chars):
         # that says what it is.
         text = text[:limit_chars].rstrip() + "\n\n[…file truncated…]"
     return text, truncated, ""
+
+
+# --- avatars ---------------------------------------------------------------
+# SVG is deliberately excluded: it is a document format that can carry script,
+# and these images are served from our own origin.
+AVATAR_TYPES = {
+    b"\x89PNG\r\n\x1a\n": ("image/png", ".png"),
+    b"\xff\xd8\xff": ("image/jpeg", ".jpg"),
+    b"GIF87a": ("image/gif", ".gif"),
+    b"GIF89a": ("image/gif", ".gif"),
+}
+
+MAX_AVATAR_BYTES = 2 * 1024 * 1024
+
+
+def sniff_image(data):
+    """Identify an image by its bytes, not by what the upload claims.
+
+    Returns (mime, extension) or (None, reason).
+    """
+    if not data:
+        return None, "That file is empty."
+    if len(data) > MAX_AVATAR_BYTES:
+        return None, "Avatars must be under 2 MB."
+
+    for signature, (mime, extension) in AVATAR_TYPES.items():
+        if data.startswith(signature):
+            return (mime, extension), ""
+
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return ("image/webp", ".webp"), ""
+
+    return None, "Use a PNG, JPEG, GIF or WebP image."

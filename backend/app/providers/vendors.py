@@ -1,3 +1,6 @@
+import time
+
+from ..text_cleanup import clean as clean_output
 from .base import BaseProvider, ProviderError
 
 
@@ -31,15 +34,31 @@ class AnthropicProvider(BaseProvider):
     default_model = "claude-sonnet-4-5"
     api_version = "2023-06-01"
 
-    def complete(self, system, messages, temperature, max_tokens):
+    supports_documents = True
+
+    WEB_SEARCH_TOOL = {
+        "type": "web_search_20250305",
+        "name": "web_search",
+        "max_uses": 5,
+    }
+
+    def complete(self, system, messages, temperature, max_tokens,
+                 documents=None, document_fallback="", cache_prefix="",
+                 web_search=False):
+        use_docs = bool(documents) and not _rejects(self.key, self.model, "documents")
+        use_search = web_search and not _rejects(self.key, self.model, "web_search")
         payload = {
             "model": self.model,
             "system": system,
-            "messages": [
-                {"role": m["role"], "content": m["content"]} for m in messages
-            ],
+            "messages": self._messages(
+                messages, documents if use_docs else None,
+                "" if use_docs else document_fallback,
+                cache_prefix,
+            ),
             "max_tokens": max_tokens,
         }
+        if use_search:
+            payload["tools"] = [self.WEB_SEARCH_TOOL]
         # Some newer models reject the parameter outright rather than ignoring
         # it, so once a model has refused it we stop sending it.
         if not _rejects(self.key, self.model, "temperature"):
@@ -56,10 +75,28 @@ class AnthropicProvider(BaseProvider):
                 json=payload,
             )
         except ProviderError as exc:
-            if not _mentions(exc, "temperature") or "temperature" not in payload:
+            retry = False
+            if _mentions(exc, "temperature") and "temperature" in payload:
+                _remember_rejection(self.key, self.model, "temperature")
+                payload.pop("temperature")
+                retry = True
+            elif use_search and _mentions(exc, "web_search", "tool", "tools"):
+                _remember_rejection(self.key, self.model, "web_search")
+                payload.pop("tools", None)
+                use_search = False
+                retry = True
+            elif use_docs and _mentions(exc, "document", "pdf", "media_type",
+                                        "content block", "unsupported"):
+                # This model cannot take PDFs. Fall back to the extracted text
+                # so the files still reach it, and stop trying for this model.
+                _remember_rejection(self.key, self.model, "documents")
+                payload["messages"] = self._messages(
+                    messages, None, document_fallback, cache_prefix
+                )
+                use_docs = False
+                retry = True
+            if not retry:
                 raise
-            _remember_rejection(self.key, self.model, "temperature")
-            payload.pop("temperature")
             data = self._post(
                 "https://api.anthropic.com/v1/messages",
                 headers={
@@ -71,7 +108,7 @@ class AnthropicProvider(BaseProvider):
             )
         blocks = data.get("content", []) or []
         parts = [b.get("text", "") for b in blocks if b.get("type") == "text"]
-        text = "\n".join(p for p in parts if p).strip()
+        text = clean_output("\n".join(p for p in parts if p))
 
         usage = data.get("usage") or {}
         self.last_meta = {
@@ -79,11 +116,50 @@ class AnthropicProvider(BaseProvider):
             "block_types": [b.get("type") for b in blocks],
             "input_tokens": usage.get("input_tokens"),
             "output_tokens": usage.get("output_tokens"),
+            # Written on the first turn, read on every turn after it.
+            "cache_write": usage.get("cache_creation_input_tokens"),
+            "cache_read": usage.get("cache_read_input_tokens"),
         }
 
         if not text:
             raise ProviderError(self._explain_empty(blocks, data, max_tokens))
         return text
+
+    @staticmethod
+    def _messages(messages, documents, fallback_text, cache_prefix=""):
+        """Documents and the unchanging file text ride ahead of the prompt.
+
+        The last block before the conversation carries a cache breakpoint, so
+        everything above it — the PDFs and the file text — is billed once and
+        then reused on later turns instead of re-read every time.
+        """
+        out = [{"role": m["role"], "content": m["content"]} for m in messages]
+        if not out:
+            return out
+
+        blocks = []
+        for d in documents or []:
+            blocks.append({
+                "type": "document",
+                "source": {
+                    "type": "base64",
+                    "media_type": d["media_type"],
+                    "data": d["data"],
+                },
+                "title": d["filename"],
+            })
+        stable = cache_prefix or fallback_text
+        if stable:
+            blocks.append({"type": "text", "text": stable})
+
+        if not blocks:
+            return out
+
+        # Mark the end of the unchanging part.
+        blocks[-1] = dict(blocks[-1], cache_control={"type": "ephemeral"})
+        blocks.append({"type": "text", "text": out[0]["content"]})
+        out[0] = {"role": out[0]["role"], "content": blocks}
+        return out
 
     def _explain_empty(self, blocks, data, max_tokens):
         """An empty reply always has a reason. Say which one."""
@@ -119,11 +195,22 @@ class OpenAIProvider(BaseProvider):
     default_model = "gpt-4o"
     endpoint = "https://api.openai.com/v1/chat/completions"
 
-    def complete(self, system, messages, temperature, max_tokens):
-        payload_messages = [{"role": "system", "content": system}] + [
-            {"role": m["role"], "content": m["content"]} for m in messages
-        ]
-        payload = {"model": self.model, "messages": payload_messages}
+    supports_documents = True
+
+    def complete(self, system, messages, temperature, max_tokens,
+                 documents=None, document_fallback="", cache_prefix="",
+                 web_search=False):
+        # OpenAI caches long identical prefixes automatically — there is no
+        # breakpoint to set, the files simply have to come first.
+        use_docs = bool(documents) and not _rejects(self.key, self.model, "documents")
+        use_search = web_search and not _rejects(self.key, self.model, "web_search")
+        payload = {
+            "model": self.model,
+            "messages": self._messages(
+                system, messages, documents if use_docs else None,
+                ("" if use_docs else document_fallback) or cache_prefix,
+            ),
+        }
 
         # Reasoning models reject temperature and want max_completion_tokens
         # instead of max_tokens. Both are learned from the first refusal
@@ -134,6 +221,8 @@ class OpenAIProvider(BaseProvider):
             payload["max_completion_tokens"] = max_tokens
         else:
             payload["max_tokens"] = max_tokens
+        if use_search:
+            payload["web_search_options"] = {}
 
         url = f"{self.base_url}/chat/completions" if self.base_url else self.endpoint
         headers = {
@@ -141,11 +230,22 @@ class OpenAIProvider(BaseProvider):
             "Content-Type": "application/json",
         }
 
-        for _ in range(3):
+        attempts = []
+        last_error = None
+        # One attempt per parameter that might be refused, plus one to succeed.
+        for _ in range(5):
+            attempts.append(
+                "+".join(
+                    k for k in ("web_search_options", "temperature",
+                                "max_tokens", "max_completion_tokens")
+                    if k in payload
+                ) or "plain"
+            )
             try:
                 data = self._post(url, headers=headers, json=payload)
                 break
             except ProviderError as exc:
+                last_error = exc
                 if _mentions(exc, "temperature") and "temperature" in payload:
                     _remember_rejection(self.key, self.model, "temperature")
                     payload.pop("temperature")
@@ -155,14 +255,31 @@ class OpenAIProvider(BaseProvider):
                     _remember_rejection(self.key, self.model, "max_tokens")
                     payload["max_completion_tokens"] = payload.pop("max_tokens")
                     continue
+                if use_search and _mentions(exc, "web_search", "tool", "unsupported",
+                                            "unrecognized", "not supported"):
+                    _remember_rejection(self.key, self.model, "web_search")
+                    payload.pop("web_search_options", None)
+                    use_search = False
+                    continue
+                if use_docs and _mentions(exc, "file", "pdf", "content", "unsupported",
+                                          "invalid_type"):
+                    _remember_rejection(self.key, self.model, "documents")
+                    payload["messages"] = self._messages(
+                        system, messages, None, document_fallback or cache_prefix
+                    )
+                    use_docs = False
+                    continue
                 raise
         else:
             raise ProviderError(
-                f"{self.label} kept rejecting the request parameters."
+                f"{last_error} {self.label} refused every combination "
+                f"(tried: {'; '.join(attempts)}). If a plain request also "
+                "fails, the model name is the likely cause — check it against "
+                "the list your key returns in the agent form."
             )
         try:
             choice = data["choices"][0]
-            text = (choice["message"]["content"] or "").strip()
+            text = clean_output(choice["message"]["content"] or "")
         except (KeyError, IndexError, TypeError) as exc:
             raise ProviderError(f"{self.label} returned an unexpected shape.") from exc
 
@@ -170,6 +287,9 @@ class OpenAIProvider(BaseProvider):
         finish = choice.get("finish_reason")
         self.last_meta = {
             "stop_reason": finish,
+            "cache_read": (usage.get("prompt_tokens_details") or {}).get(
+                "cached_tokens"
+            ),
             "input_tokens": usage.get("prompt_tokens"),
             "output_tokens": usage.get("completion_tokens"),
             "reasoning_tokens": (usage.get("completion_tokens_details") or {}).get(
@@ -196,33 +316,139 @@ class OpenAIProvider(BaseProvider):
         return text
 
 
+def _openai_messages(system, messages, documents, fallback_text):
+    """PDFs go in as file parts on the first user message."""
+    out = [{"role": "system", "content": system}] + [
+        {"role": m["role"], "content": m["content"]} for m in messages
+    ]
+    first = next((m for m in out if m["role"] == "user"), None)
+    if first is None:
+        return out
+    if documents:
+        parts = [
+            {
+                "type": "file",
+                "file": {
+                    "filename": d["filename"],
+                    "file_data": f"data:{d['media_type']};base64,{d['data']}",
+                },
+            }
+            for d in documents
+        ]
+        parts.append({"type": "text", "text": first["content"]})
+        first["content"] = parts
+    elif fallback_text:
+        first["content"] = f"{fallback_text}\n\n{first['content']}"
+    return out
+
+
+OpenAIProvider._messages = staticmethod(_openai_messages)
+
+
 class GeminiProvider(BaseProvider):
     key = "gemini"
     label = "Gemini"
     default_model = "gemini-2.0-flash"
     base = "https://generativelanguage.googleapis.com/v1beta/models"
 
-    def complete(self, system, messages, temperature, max_tokens):
-        contents = [
-            {
-                "role": "user" if m["role"] == "user" else "model",
-                "parts": [{"text": m["content"]}],
-            }
-            for m in messages
-        ]
-        data = self._post(
-            f"{self.base}/{self.model}:generateContent",
-            headers={"Content-Type": "application/json"},
-            params={"key": self.api_key},
-            json={
-                "systemInstruction": {"parts": [{"text": system}]},
+    supports_documents = True
+
+    def complete(self, system, messages, temperature, max_tokens,
+                 documents=None, document_fallback="", cache_prefix="",
+                 web_search=False):
+        use_docs = bool(documents) and not _rejects(self.key, self.model, "documents")
+        # Newer models take google_search; 1.5-era ones want the retrieval
+        # form. Try the modern one, fall back, then give up on search.
+        search_mode = ""
+        if web_search and not _rejects(self.key, self.model, "web_search"):
+            search_mode = (
+                "google_search_retrieval"
+                if _rejects(self.key, self.model, "google_search")
+                else "google_search"
+            )
+        # Gemma models on this endpoint reject a system instruction, and answer
+        # a request carrying one with a 500 rather than a useful error. Learned
+        # from the first failure rather than guessed from the model name.
+        use_system = not _rejects(self.key, self.model, "system")
+
+        def build():
+            contents = self._contents(
+                messages, documents if use_docs else None,
+                ("" if use_docs else document_fallback) or cache_prefix,
+                "" if use_system else system,
+            )
+            body = {
                 "contents": contents,
                 "generationConfig": {
                     "temperature": temperature,
                     "maxOutputTokens": max_tokens,
                 },
-            },
-        )
+            }
+            if use_system:
+                body["systemInstruction"] = {"parts": [{"text": system}]}
+            if search_mode:
+                body["tools"] = [{search_mode: {}}]
+            return body
+
+        url = f"{self.base}/{self.model}:generateContent"
+        headers = {"Content-Type": "application/json"}
+        params = {"key": self.api_key}
+
+        data = None
+        transient_retries = 1
+        attempts = []
+        for _ in range(4):
+            body = build()
+            attempts.append(
+                "+".join(
+                    k for k in ("systemInstruction", "tools") if k in body
+                ) or "plain"
+            )
+            try:
+                data = self._post(url, headers=headers, params=params, json=body)
+                break
+            except ProviderError as exc:
+                internal = _mentions(exc, "500", "internal error", "503",
+                                     "overloaded", "unavailable")
+                if search_mode and (internal or _mentions(
+                        exc, "google_search", "tool", "unsupported", "not supported")):
+                    if search_mode == "google_search":
+                        _remember_rejection(self.key, self.model, "google_search")
+                        search_mode = "google_search_retrieval"
+                    else:
+                        _remember_rejection(self.key, self.model, "web_search")
+                        search_mode = ""
+                    continue
+                if use_docs and (internal or _mentions(exc, "inline_data", "mime",
+                                                       "unsupported", "media")):
+                    _remember_rejection(self.key, self.model, "documents")
+                    use_docs = False
+                    continue
+                if use_system and (internal or _mentions(exc, "systeminstruction",
+                                                         "system_instruction")):
+                    _remember_rejection(self.key, self.model, "system")
+                    use_system = False
+                    continue
+                if internal and transient_retries:
+                    # Gemini returns 500 for genuinely transient faults too.
+                    transient_retries -= 1
+                    time.sleep(1.5)
+                    continue
+                # Out of fallbacks. Say what was attempted, so the failure is
+                # diagnosable rather than just "500".
+                raise ProviderError(
+                    f"{exc} Tried: {', '.join(attempts)}. "
+                    "If this model works nowhere, check the model name against "
+                    "the list your key returns — Gemma models in particular "
+                    "reject system instructions and tools."
+                ) from exc
+        if data is None:
+            raise ProviderError(
+                f"Gemini failed on every attempt (tried: {', '.join(attempts)}). "
+                "If a plain request also fails, the model name is the likely "
+                "cause — check it against the list your key returns in the "
+                "agent form."
+            )
         candidates = data.get("candidates") or []
         if not candidates:
             blocked = (data.get("promptFeedback") or {}).get("blockReason")
@@ -230,10 +456,40 @@ class GeminiProvider(BaseProvider):
                 f"Gemini returned no candidates{f' (blocked: {blocked})' if blocked else ''}."
             )
         parts = candidates[0].get("content", {}).get("parts", [])
-        text = "\n".join(p.get("text", "") for p in parts).strip()
+        text = clean_output("\n".join(p.get("text", "") for p in parts))
         if not text:
             raise ProviderError("Gemini returned an empty reply.")
         return text
+
+
+def _gemini_contents(messages, documents, fallback_text, inline_system=""):
+    """Build the request contents.
+
+    `inline_system` is set only when the model refused a system instruction:
+    the same text is folded into the first user message instead, so the agent
+    still knows its name, the room and its own instructions.
+    """
+    out = []
+    for index, m in enumerate(messages):
+        parts = []
+        if index == 0 and documents:
+            parts += [
+                {"inline_data": {"mime_type": d["media_type"], "data": d["data"]}}
+                for d in documents
+            ]
+        text = m["content"]
+        if index == 0 and not documents and fallback_text:
+            text = f"{fallback_text}\n\n{text}"
+        if index == 0 and inline_system:
+            text = f"{inline_system}\n\n{text}"
+        parts.append({"text": text})
+        out.append(
+            {"role": "user" if m["role"] == "user" else "model", "parts": parts}
+        )
+    return out
+
+
+GeminiProvider._contents = staticmethod(_gemini_contents)
 
 
 class CustomProvider(OpenAIProvider):
@@ -244,11 +500,20 @@ class CustomProvider(OpenAIProvider):
     label = "Custom model"
     default_model = ""
     needs_base_url = True
+    # Self-hosted gateways rarely accept file parts. Documents are attempted
+    # anyway and fall back to text on the first refusal, which costs one
+    # wasted call per model rather than a configuration setting.
+    supports_documents = True
 
-    def complete(self, system, messages, temperature, max_tokens):
+    def complete(self, system, messages, temperature, max_tokens,
+                 documents=None, document_fallback="", cache_prefix="",
+                 web_search=False):
         if not self.base_url:
             raise ProviderError("This custom agent has no base URL set.")
-        return super().complete(system, messages, temperature, max_tokens)
+        return super().complete(
+            system, messages, temperature, max_tokens, documents,
+            document_fallback, cache_prefix, web_search,
+        )
 
 
 # ---------------------------------------------------------------------------

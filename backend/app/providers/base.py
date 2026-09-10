@@ -25,9 +25,36 @@ class BaseProvider:
         self.timeout = timeout
         # Filled in by complete(): stop reason and token counts for the log.
         self.last_meta = {}
+        # The vendor's raw error body, kept for the log when the message alone
+        # says nothing useful.
+        self.last_error_body = ""
+
+    # Whether this vendor can take a PDF as a document rather than as text.
+    supports_documents = False
 
     def complete(self, system: str, messages: list[dict], temperature: float,
-                 max_tokens: int) -> str:
+                 max_tokens: int, documents: list[dict] | None = None,
+                 document_fallback: str = "", cache_prefix: str = "",
+                 web_search: bool = False) -> str:
+        """Answer the prompt.
+
+        `documents` is a neutral list of
+        {"filename", "media_type", "data" (base64)} that the vendor parses
+        itself — layout, tables and figures survive, which plain-text
+        extraction loses. `document_fallback` is the extracted text for those
+        same files, used automatically if the vendor refuses the documents, so
+        a model that cannot take PDFs still sees their contents.
+
+        `cache_prefix` is the part of the prompt that does not change between
+        turns — the shared files. Keeping it first and marking it lets vendors
+        reuse it instead of re-reading a large document on every single turn,
+        which is where the money goes in a long conversation.
+
+        `web_search` asks the vendor to enable its own server-side search tool.
+        The model decides whether to use it, the vendor runs it, and the result
+        arrives inside the same reply — nothing is executed here. A vendor or
+        model that will not accept the tool is retried without it.
+        """
         raise NotImplementedError
 
     def list_models(self) -> list[dict]:
@@ -78,13 +105,21 @@ class BaseProvider:
         detail = ""
         try:
             body = resp.json()
-            detail = (
-                body.get("error", {}).get("message")
-                if isinstance(body.get("error"), dict)
-                else body.get("error") or body.get("message") or ""
-            )
+            error = body.get("error")
+            if isinstance(error, dict):
+                detail = error.get("message") or ""
+                # Google puts the useful part in details[], not message.
+                extra = error.get("details") or error.get("status")
+                if extra and detail in ("", "Internal error encountered."):
+                    detail = f"{detail} {extra}".strip()
+            else:
+                detail = error or body.get("message") or ""
         except ValueError:
             detail = resp.text[:300]
+
+        # A bare "Internal error encountered." is useless on its own; keep the
+        # raw body so the log says something actionable.
+        self.last_error_body = (resp.text or "")[:600]
         if resp.status_code in (401, 403):
             return f"{self.label} rejected the API key. {detail}".strip()
         if resp.status_code == 404:

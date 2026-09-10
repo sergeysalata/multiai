@@ -1,7 +1,7 @@
 /* multiai.online — static client for the /api/v1 JSON backend.
  *
  * No build step and no framework: this file is served as-is. Routing is
- * hash-based (#/groups/3) so the server needs no rewrite rules — any static
+ * hash-based (#/chats/3) so the server needs no rewrite rules — any static
  * host will do, and a refresh on a deep link always resolves.
  */
 
@@ -27,6 +27,7 @@
     source: null, poller: null,
     discussionId: null, groupId: null,
     status: "idle", mode: "step", lastId: 0,
+    faces: {},   // agent id -> agent, so old turns show current avatars
   };
 
   // ---------------------------------------------------------------- helpers
@@ -127,6 +128,69 @@
     }
     return payload;
   }
+
+  // Built-in avatars are drawn here from the agent's colour rather than
+  // shipped as files: no storage, no request, and they stay in step when the
+  // colour changes.
+  var AVATAR_PRESETS = ["monogram", "rings", "bars", "grid", "dots", "chevron"];
+
+  function presetSvg(preset, color, name, size) {
+    var initial = esc((name || "?").trim().charAt(0).toUpperCase() || "?");
+    var shape;
+    switch (preset) {
+      case "rings":
+        shape = '<circle cx="20" cy="20" r="13" fill="none" stroke="#fff" ' +
+                'stroke-width="3"/><circle cx="20" cy="20" r="5" fill="#fff"/>';
+        break;
+      case "bars":
+        shape = '<rect x="9" y="20" width="5" height="12" fill="#fff"/>' +
+                '<rect x="17" y="12" width="5" height="20" fill="#fff"/>' +
+                '<rect x="25" y="16" width="5" height="16" fill="#fff"/>';
+        break;
+      case "grid":
+        shape = [[12,12],[24,12],[12,24],[24,24]].map(function (p) {
+          return '<rect x="' + (p[0] - 3) + '" y="' + (p[1] - 3) +
+            '" width="7" height="7" fill="#fff"/>';
+        }).join("");
+        break;
+      case "dots":
+        shape = '<circle cx="13" cy="20" r="3.5" fill="#fff"/>' +
+                '<circle cx="20" cy="20" r="3.5" fill="#fff"/>' +
+                '<circle cx="27" cy="20" r="3.5" fill="#fff"/>';
+        break;
+      case "chevron":
+        shape = '<path d="M13 13 L21 20 L13 27" stroke="#fff" stroke-width="3" ' +
+                'fill="none" stroke-linecap="round"/>' +
+                '<path d="M22 13 L30 20 L22 27" stroke="#fff" stroke-width="3" ' +
+                'fill="none" stroke-linecap="round" opacity=".55"/>';
+        break;
+      default:
+        shape = '<text x="20" y="20" text-anchor="middle" dominant-baseline="central" ' +
+                'fill="#fff" font-family="Space Grotesk, sans-serif" font-size="17" ' +
+                'font-weight="500">' + initial + "</text>";
+    }
+    return '<svg class="avatar-img" width="' + size + '" height="' + size +
+      '" viewBox="0 0 40 40" aria-hidden="true">' +
+      '<rect width="40" height="40" rx="20" fill="' + esc(color || "#2F2BA8") + '"/>' +
+      shape + "</svg>";
+  }
+
+  function avatar(agent, size) {
+    size = size || 28;
+    if (agent && agent.avatar_url) {
+      return '<img class="avatar-img" width="' + size + '" height="' + size +
+        '" src="' + API + agent.avatar_url.replace(/^\/v1/, "") +
+        '" alt="" loading="lazy">';
+    }
+    return presetSvg(
+      (agent && agent.avatar_preset) || "monogram",
+      agent && agent.color,
+      agent && agent.name,
+      size
+    );
+  }
+
+  function seatedFaces(members) { return members || []; }
 
   function ordinal(n) {
     return ["first", "second", "third", "fourth", "fifth", "sixth"][n - 1] ||
@@ -365,10 +429,12 @@
         '<div class="panel__body">' +
           (groups.length
             ? '<div class="card-list">' + groups.map(function (g) {
-                return '<a href="#/groups/' + g.id + '"><b>' + esc(g.name) + "</b><span>" +
+                return '<div class="chat-row">' +
+                  '<a href="#/chats/' + g.id + '"><b>' + esc(g.name) + "</b><span>" +
                   g.agent_count + " agent" + (g.agent_count === 1 ? "" : "s") +
-                  " · " + g.discussion_count + " topic" +
-                  (g.discussion_count === 1 ? "" : "s") + "</span></a>";
+                  "</span></a>" +
+                  '<button class="btn btn--danger btn--small" data-delete-chat="' +
+                  g.id + '" data-name="' + esc(g.name) + '">Delete</button></div>';
               }).join("") + "</div>"
             : '<div class="empty"><h3>No chats yet</h3><p style="margin:0">A chat ' +
               "is a room of agents that stays together. Make one for a recurring " +
@@ -390,6 +456,23 @@
           agentSidebar(agents) +
         "</div></div>";
 
+    app.querySelectorAll("[data-delete-chat]").forEach(function (button) {
+      button.addEventListener("click", async function () {
+        var name = button.dataset.name;
+        if (!confirm('Delete "' + name + '" and every topic in it? This cannot ' +
+                     "be undone.")) return;
+        button.disabled = true;
+        try {
+          await api("/groups/" + button.dataset.deleteChat, { method: "DELETE" });
+          toast('"' + name + '" deleted.');
+          viewDashboard();
+        } catch (err) {
+          toast(err.message, "error");
+          button.disabled = false;
+        }
+      });
+    });
+
     on("#create-group", "click", async function () {
       var data = form("group-form");
       if (!data.name.trim()) return toast("Name the chat.", "error");
@@ -410,8 +493,8 @@
       '<div class="panel__body">' +
         (agents.length
           ? '<ul class="roster">' + agents.map(function (a) {
-              return "<li><span class='rail' style='background:" + esc(a.color) +
-                "'></span><span class='who'><b>" + esc(a.name) + "</b><span>" +
+              return "<li>" + avatar(a, 26) +
+                "<span class='who'><b>" + esc(a.name) + "</b><span>" +
                 esc(a.provider) + " · " + esc(a.model) + "</span></span></li>";
             }).join("") + "</ul>"
           : '<p style="margin:0">No agents yet. <a href="#/agents">Add your first one</a>.</p>') +
@@ -437,12 +520,16 @@
         '<div class="panel__body">' +
           (agents.length
             ? '<ul class="roster">' + agents.map(function (a) {
-                return "<li><span class='rail' style='background:" + esc(a.color) + "'></span>" +
+                return "<li>" + avatar(a, 34) +
                   "<span class='who'><b>" + esc(a.name) + "</b><span>" +
                   esc(a.provider) + " · " + esc(a.model) +
                   (a.role ? " · " + esc(a.role) : "") +
                   (a.has_key ? "" : " · no key attached") +
+                  (a.web_search ? " · web search" : "") +
+                  " · " + (a.max_tokens || 0).toLocaleString() + " max tokens" +
                   "</span></span>" +
+                  '<button class="btn btn--quiet btn--small" data-edit-agent="' +
+                  a.id + '">Edit</button>' +
                   '<button class="btn btn--danger btn--small" data-remove-agent="' +
                   a.id + '">Remove</button></li>';
               }).join("") + "</ul>"
@@ -451,7 +538,8 @@
               "makes for a real argument; three copies of one model mostly agree " +
               "with themselves.</p></div>") +
         "</div></div>" +
-        '<div class="panel"><div class="panel__head"><h2>Add an agent</h2></div>' +
+        '<div class="panel"><div class="panel__head"><h2 id="form-title">Add an agent</h2>' +
+        '<button class="linklike" id="cancel-edit" type="button" hidden>Cancel</button></div>' +
         '<div class="panel__body"><div id="agent-form">' +
           '<div class="field"><label for="name">Name in the room</label>' +
           '<input id="name" name="name" type="text" maxlength="60" placeholder="e.g. Ada">' +
@@ -472,6 +560,27 @@
           '<button class="linklike" id="model-refresh" type="button">Refresh</button>' +
           '<button class="linklike" id="model-manual" type="button">Type a name</button>' +
           "</div></div>" +
+          '<div class="field" id="avatar-field"><label>Avatar</label>' +
+          '<div class="avatar-picker" id="avatar-picker">' +
+            '<span class="avatar-current" id="avatar-current"></span>' +
+            '<div class="avatar-choices" id="avatar-choices"></div>' +
+          "</div>" +
+          '<div class="avatar-actions">' +
+            '<button class="btn btn--quiet btn--small" id="avatar-upload-btn" ' +
+            'type="button">Upload image</button>' +
+            '<input type="file" id="avatar-input" accept="image/*" hidden>' +
+            '<button class="linklike" id="avatar-clear" type="button" hidden>' +
+            "Use a built-in one</button>" +
+          "</div>" +
+          '<p class="hint" id="avatar-hint">Built-in avatars use the agent\'s ' +
+          "colour. Uploading is available once the agent exists.</p></div>" +
+          '<div class="field"><label class="check">' +
+          '<input id="web_search" name="web_search" type="checkbox">' +
+          "<span>Allow web search</span></label>" +
+          '<p class="hint">The vendor runs the search and the result comes back ' +
+          "inside the reply. Give it to everyone in a chat or to nobody — one " +
+          "agent that can check facts and others that cannot is not a fair " +
+          "comparison.</p></div>" +
           '<div class="field"><label for="role">Role</label>' +
           '<input id="role" name="role" type="text" maxlength="120" ' +
           'placeholder="Sceptic, cost analyst, security reviewer…"></div>' +
@@ -481,8 +590,11 @@
           '<div class="field field-row"><div><label for="temperature">Temperature</label>' +
           '<input id="temperature" name="temperature" type="number" step="0.1" min="0" ' +
           'max="2" value="0.7"></div><div><label for="max_tokens">Max tokens per turn</label>' +
-          '<input id="max_tokens" name="max_tokens" type="number" min="200" max="8000" ' +
-          'value="1200"></div></div>' +
+          '<input id="max_tokens" name="max_tokens" type="number" min="200" max="32000" ' +
+          'value="4000"></div></div>' +
+          '<p class="hint">Reasoning models spend part of this budget thinking ' +
+          "before they write anything. Below roughly 2,000 they can run out " +
+          "mid-thought and return nothing at all.</p>" +
           '<button class="btn btn--primary" id="create-agent" type="button" ' +
           'style="margin-top:16px">Add agent</button>' +
         "</div></div></div></div>";
@@ -562,15 +674,182 @@
     syncCredentials();
     loadModels();
 
-    on("#create-agent", "click", async function () {
-      setBusy("#create-agent", true, "Adding…");
+    var editingId = null;
+    var chosenPreset = "monogram";
+    var uploadedAgent = null;   // the agent whose image is currently shown
+
+    function drawAvatar() {
+      var name = document.getElementById("name").value || "?";
+      var subject = uploadedAgent || { avatar_preset: chosenPreset,
+                                       color: "#2F2BA8", name: name };
+      document.getElementById("avatar-current").innerHTML = avatar(
+        Object.assign({}, subject, { name: name }), 44
+      );
+      document.getElementById("avatar-choices").innerHTML =
+        AVATAR_PRESETS.map(function (preset) {
+          return '<button type="button" class="avatar-choice' +
+            (!uploadedAgent && preset === chosenPreset ? " active" : "") +
+            '" data-preset="' + preset + '" aria-label="' + preset + '">' +
+            presetSvg(preset, (uploadedAgent && uploadedAgent.color) || "#2F2BA8",
+                      name, 30) + "</button>";
+        }).join("");
+
+      document.getElementById("avatar-choices")
+        .querySelectorAll("[data-preset]").forEach(function (button) {
+          button.addEventListener("click", async function () {
+            chosenPreset = button.dataset.preset;
+            if (editingId && uploadedAgent && uploadedAgent.avatar_url) {
+              // Picking a pattern replaces the uploaded image.
+              try {
+                await api("/agents/" + editingId + "/avatar", { method: "DELETE" });
+                uploadedAgent = null;
+              } catch (err) { toast(err.message, "error"); }
+            }
+            if (editingId) {
+              try {
+                await api("/agents/" + editingId, {
+                  method: "PATCH", data: { avatar_preset: chosenPreset },
+                });
+              } catch (err) { toast(err.message, "error"); }
+            }
+            drawAvatar();
+            syncAvatarActions();
+          });
+        });
+    }
+
+    function syncAvatarActions() {
+      var uploadBtn = document.getElementById("avatar-upload-btn");
+      var clear = document.getElementById("avatar-clear");
+      var hint = document.getElementById("avatar-hint");
+      uploadBtn.disabled = !editingId;
+      clear.hidden = !(uploadedAgent && uploadedAgent.avatar_url);
+      hint.textContent = editingId
+        ? "PNG, JPEG, GIF or WebP, under 2 MB."
+        : "Built-in avatars use the agent's colour. Upload an image after the "
+          + "agent exists.";
+    }
+
+    function stopEditing() {
+      uploadedAgent = null;
+      chosenPreset = "monogram";
+      editingId = null;
+      document.getElementById("form-title").textContent = "Add an agent";
+      document.getElementById("create-agent").textContent = "Add agent";
+      document.getElementById("cancel-edit").hidden = true;
+      ["name", "model", "role", "system_prompt"].forEach(function (field) {
+        document.getElementById(field).value = "";
+      });
+      document.getElementById("temperature").value = "0.7";
+      document.getElementById("max_tokens").value = "4000";
+      document.getElementById("credential_id").value = "";
+      document.getElementById("web_search").checked = false;
+      drawAvatar();
+      syncAvatarActions();
+      loadModels();
+    }
+
+    app.querySelectorAll("[data-edit-agent]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        var agent = agents.filter(function (a) {
+          return a.id === Number(button.dataset.editAgent);
+        })[0];
+        if (!agent) return;
+
+        editingId = agent.id;
+        document.getElementById("form-title").textContent = "Edit " + agent.name;
+        document.getElementById("create-agent").textContent = "Save changes";
+        document.getElementById("cancel-edit").hidden = false;
+
+        document.getElementById("name").value = agent.name;
+        document.getElementById("provider").value = agent.provider;
+        document.getElementById("role").value = agent.role || "";
+        document.getElementById("system_prompt").value = agent.system_prompt || "";
+        document.getElementById("temperature").value = agent.temperature;
+        document.getElementById("max_tokens").value = agent.max_tokens;
+        document.getElementById("web_search").checked = !!agent.web_search;
+        chosenPreset = agent.avatar_preset || "monogram";
+        uploadedAgent = agent.avatar_url ? agent : null;
+        drawAvatar();
+        syncAvatarActions();
+        syncCredentials();
+        document.getElementById("credential_id").value =
+          agent.credential_id ? String(agent.credential_id) : "";
+
+        // Load this provider's models, then select the one already set — it
+        // may not be in the list if the vendor has since retired it.
+        loadModels().then(function () {
+          var field = document.getElementById("model");
+          if (!field) return;
+          if (field.tagName === "SELECT" &&
+              !Array.prototype.some.call(field.options, function (o) {
+                return o.value === agent.model;
+              })) {
+            field.insertAdjacentHTML("afterbegin",
+              '<option value="' + esc(agent.model) + '">' + esc(agent.model) +
+              " (not in the list)</option>");
+          }
+          field.value = agent.model;
+        });
+
+        document.getElementById("name").scrollIntoView({ behavior: "smooth",
+                                                        block: "center" });
+      });
+    });
+
+    on("#cancel-edit", "click", stopEditing);
+    on("#name", "input", drawAvatar);
+
+    on("#avatar-upload-btn", "click", function () {
+      document.getElementById("avatar-input").click();
+    });
+
+    on("#avatar-input", "change", async function (e) {
+      var file = (e.target.files || [])[0];
+      e.target.value = "";
+      if (!file || !editingId) return;
+      var data = new FormData();
+      data.append("file", file);
+      setBusy("#avatar-upload-btn", true, "Uploading…");
       try {
-        await api("/agents", { method: "POST", data: form("agent-form") });
-        toast("Agent added.");
+        var result = await upload("/agents/" + editingId + "/avatar", data);
+        uploadedAgent = result.agent;
+        toast("Avatar updated.");
+        drawAvatar();
+        syncAvatarActions();
+      } catch (err) { toast(err.message, "error"); }
+      setBusy("#avatar-upload-btn", false, "Upload image");
+    });
+
+    on("#avatar-clear", "click", async function () {
+      if (!editingId) return;
+      try {
+        await api("/agents/" + editingId + "/avatar", { method: "DELETE" });
+        uploadedAgent = null;
+        drawAvatar();
+        syncAvatarActions();
+      } catch (err) { toast(err.message, "error"); }
+    });
+
+    drawAvatar();
+    syncAvatarActions();
+
+    on("#create-agent", "click", async function () {
+      var editing = editingId;
+      setBusy("#create-agent", true, editing ? "Saving…" : "Adding…");
+      try {
+        var payload = form("agent-form");
+        payload.avatar_preset = chosenPreset;
+        await api(editing ? "/agents/" + editing : "/agents", {
+          method: editing ? "PATCH" : "POST",
+          data: payload,
+        });
+        toast(editing ? "Agent updated. It applies from its next turn."
+                      : "Agent added.");
         viewAgents();
       } catch (err) {
         toast(err.message, "error");
-        setBusy("#create-agent", false, "Add agent");
+        setBusy("#create-agent", false, editing ? "Save changes" : "Add agent");
       }
     });
 
@@ -664,6 +943,8 @@
     try {
       group = (await api("/groups/" + groupId)).group;
       agents = (await api("/agents")).agents;
+      // One continuous conversation per chat. The backend still stores it as
+      // a discussion row; the newest one is simply always the live one.
       var target = discussionId ||
         (group.discussions.length ? group.discussions[0].id : null);
       if (target) discussion = (await api("/discussions/" + target)).discussion;
@@ -672,6 +953,10 @@
     var seated = group.members;
     var seatedIds = seated.map(function (m) { return m.id; });
     var choosable = agents.filter(function (a) { return seatedIds.indexOf(a.id) === -1; });
+
+    live.faces = {};
+    seatedFaces(group.members).forEach(function (a) { live.faces[a.id] = a; });
+    agents.forEach(function (a) { if (!live.faces[a.id]) live.faces[a.id] = a; });
 
     live.discussionId = discussion ? discussion.id : null;
     live.groupId = groupId;
@@ -686,6 +971,11 @@
           return '<span class="seat-tag"><i style="background:' + esc(m.color) + '"></i>' +
             esc(m.name) + "</span>";
         }).join("") + "</span></div>" +
+        '<div class="chat-actions">' +
+          "<span>Export this chat</span>" +
+          '<a href="' + API + "/groups/" + groupId + '/export?format=md">Markdown</a>' +
+          '<a href="' + API + "/groups/" + groupId + '/export?format=json">JSON</a>' +
+        "</div>" +
 
       '<div class="split"><div>' +
         '<div class="transcript" id="transcript"></div>' +
@@ -728,8 +1018,8 @@
           '<div class="panel__body">' +
             (seated.length
               ? '<ul class="roster roster--ordered">' + seated.map(function (m, i) {
-                  return "<li><span class='rail' style='background:" + esc(m.color) +
-                    "'></span><span class='who'><b>" + esc(m.name) + "</b><span>speaks " +
+                  return "<li>" + avatar(m, 30) +
+                    "<span class='who'><b>" + esc(m.name) + "</b><span>speaks " +
                     ordinal(i + 1) + " · " + esc(m.provider) + " · " + esc(m.model) +
                     "</span></span>" +
                     "<span class='seat-move'>" +
@@ -769,22 +1059,6 @@
             '<button class="btn btn--quiet" id="save-settings" type="button" ' +
             'style="margin-top:14px">Save changes</button>' +
           "</div></div></div>" +
-
-        '<div class="panel"><div class="panel__head"><h2>Topics</h2>' +
-          '<button class="linklike" id="new-topic" type="button">New</button></div>' +
-          '<div class="panel__body">' +
-            (group.discussions.length
-              ? '<div class="card-list">' + group.discussions.map(function (d) {
-                  return '<a href="#/groups/' + group.id + "/d/" + d.id + '"' +
-                    (discussion && d.id === discussion.id ? ' class="current"' : "") +
-                    "><b>" + esc(d.question.slice(0, 70)) +
-                    (d.question.length > 70 ? "…" : "") + "</b><span>" +
-                    esc(d.mode === "flow" ? "flow" : "step") + " · " +
-                    '<span class="status-dot" data-status="' + esc(d.status) + '">' +
-                    esc(d.status) + "</span></span></a>";
-                }).join("") + "</div>"
-              : '<p style="margin:0">Nothing yet. Type below to start.</p>') +
-          "</div></div>" +
 
         '<button class="btn btn--danger btn--small" id="delete-group" type="button">' +
         "Delete chat</button>" +
@@ -856,17 +1130,6 @@
       if (!live.discussionId) return;
       try { await api("/discussions/" + live.discussionId + "/cancel", { method: "POST" }); }
       catch (err) { toast(err.message, "error"); }
-    });
-
-    on("#new-topic", "click", function () {
-      live.discussionId = null;
-      live.status = "idle";
-      document.getElementById("transcript").innerHTML =
-        '<div class="empty"><h3>New topic</h3><p style="margin:0">' +
-        "Type below. Everyone seated reads what you write.</p></div>";
-      refreshControls();
-      history.replaceState({}, "", "#/chats/" + groupId);
-      document.getElementById("message").focus();
     });
 
     on("#add-member", "click", async function () {
@@ -1091,8 +1354,10 @@
       // "turn", and "verdict" from conversations made before rooms existed.
       node.className = "turn";
       node.innerHTML =
-        '<div class="turn__who" style="--speaker:' + esc(m.color) + '"><b>' +
-        esc(m.speaker) + "</b><span>" + esc(m.provider) + " · " + esc(m.model) + "</span>" +
+        '<div class="turn__who" style="--speaker:' + esc(m.color) + '">' +
+        '<span class="turn__face">' + avatar(live.faces[m.agent_id] || m, 26) +
+        "<b>" + esc(m.speaker) + "</b></span>" +
+        "<span>" + esc(m.provider) + " · " + esc(m.model) + "</span>" +
         (m.input_chars ? '<div class="turn__meta">read ' + m.input_chars +
                          " chars of the room</div>" : "") +
         "</div><div class='turn__body'>" + m.html + "</div>";

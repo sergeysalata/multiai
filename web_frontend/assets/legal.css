@@ -1,0 +1,88 @@
+/* Long-form reading. Serif body, narrow measure, quiet headings — these pages
+   are meant to be read once, carefully, not scanned. */
+
+.wrap--legal {
+  max-width: 720px;
+  padding-top: 56px;
+  padding-bottom: 96px;
+}
+
+.wrap--legal h1 {
+  font-size: clamp(1.9rem, 4vw, 2.5rem);
+  letter-spacing: -0.02em;
+  margin-bottom: 6px;
+}
+
+.legal-date {
+  font-size: .82rem;
+  color: var(--ink-faint);
+  margin-bottom: 32px;
+}
+
+.wrap--legal p,
+.wrap--legal li {
+  font-family: var(--serif);
+  font-size: 1.04rem;
+  line-height: 1.65;
+  max-width: 66ch;
+}
+
+.legal-lede {
+  font-size: 1.15rem;
+  color: var(--ink-soft);
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: 34px;
+}
+
+.wrap--legal h2 {
+  font-family: var(--sans);
+  font-size: 1.12rem;
+  margin: 38px 0 10px;
+  padding-top: 18px;
+  border-top: 1px solid var(--rule);
+}
+
+.wrap--legal h3 {
+  font-family: var(--sans);
+  font-size: .95rem;
+  color: var(--ink-soft);
+  margin: 22px 0 6px;
+}
+
+.wrap--legal ul {
+  padding-left: 20px;
+  margin: 0 0 1em;
+}
+.wrap--legal li { margin-bottom: 6px; }
+
+/* The two things a reader must not miss: where their words go, and who pays. */
+.legal-callout {
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-left: 3px solid var(--ink);
+  border-radius: var(--r);
+  padding: 16px 20px;
+  margin: 20px 0 24px;
+}
+
+.wrap--legal code {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: .88em;
+  background: #e7eaee;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.legal-foot {
+  margin-top: 44px;
+  padding-top: 18px;
+  border-top: 1px solid var(--rule);
+  font-family: var(--sans) !important;
+  font-size: .85rem !important;
+  color: var(--ink-faint);
+}
+
+@media (max-width: 640px) {
+  .wrap--legal { padding-top: 32px; }
+}
