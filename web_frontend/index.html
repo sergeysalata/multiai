@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>multiai — a panel of AI models that argue it out</title>
+<meta name="description" content="Put Claude, ChatGPT, Gemini and your own models in one room. They read each other's answers, argue, and hand you one conclusion.">
+<meta name="theme-color" content="#eff1f3">
+
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/app.css">
+
+<!-- Maths. Loaded async: if the CDN is unreachable the formulas fall back to
+     readable TeX source rather than breaking the page. -->
+<link rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css"
+      integrity="sha384-nB0miv6/jRmo5UMMR1wu3Gz6NLsoTkbqJghGIsx//Rlm+ZU03BU6SQNC66uf4l5+"
+      crossorigin="anonymous">
+<script defer
+        src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"
+        integrity="sha384-7zkQWkzuo3B5mTepMUcHkMB5jZaolc2xDwL6VFqjFALcbeS9Ggm/Yr2r3Dy4lfFg"
+        crossorigin="anonymous"></script>
+
+<script>
+  // Where the backend lives. Change only if you proxy it somewhere else.
+  window.MULTIAI_API = "/api/v1";
+</script>
+</head>
+<body>
+
+<header class="masthead">
+  <a class="wordmark" href="#/">
+    <span class="seats" aria-hidden="true"><i></i><i></i><i></i></span>
+    multiai
+  </a>
+  <nav class="nav" id="nav" hidden>
+    <a href="#/" data-route="/">Chats</a>
+    <a href="#/agents" data-route="/agents">Agents</a>
+    <a href="#/keys" data-route="/keys">Keys</a>
+    <img class="avatar" id="avatar" alt="" hidden>
+    <button class="linklike" id="signout" type="button">Sign out</button>
+  </nav>
+  <nav class="nav" id="nav-anon" hidden>
+    <a href="#/signin">Sign in</a>
+    <a href="#/register">Create account</a>
+  </nav>
+</header>
+
+<main class="wrap" id="app">
+  <div class="loading">Loading…</div>
+</main>
+
+<div class="toast-tray" id="toasts" aria-live="polite"></div>
+
+<noscript>
+  <div class="wrap">
+    <div class="empty">
+      <h3>JavaScript is switched off</h3>
+      <p style="margin:0">This page needs it. The server-rendered version of the
+      same app works without it, at <a href="/api/">/api/</a>.</p>
+    </div>
+  </div>
+</noscript>
+
+<script src="/assets/app.js"></script>
+</body>
+</html>

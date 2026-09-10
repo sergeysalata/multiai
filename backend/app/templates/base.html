@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}multiai{% endblock %}</title>
+<meta name="description" content="Put Claude, ChatGPT, Gemini and your own models in one room. They read each other's answers, argue, and hand you one conclusion.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body>
+<header class="masthead">
+  <a class="wordmark" href="{{ url_for('main.landing') }}">
+    <span class="seats" aria-hidden="true"><i></i><i></i><i></i></span>
+    multiai
+  </a>
+  <nav class="nav">
+    {% if current_user.is_authenticated %}
+      <a href="{{ url_for('main.dashboard') }}">Groups</a>
+      <a href="{{ url_for('main.agents') }}">Agents</a>
+      <a href="{{ url_for('main.keys') }}">Keys</a>
+      <form method="post" action="{{ url_for('auth.logout') }}">
+        <button class="btn btn--quiet btn--small" type="submit">Sign out</button>
+      </form>
+    {% else %}
+      <a href="{{ url_for('auth.login') }}">Sign in</a>
+      <a class="btn btn--primary btn--small" href="{{ url_for('auth.register') }}"
+         style="text-decoration:none">Create account</a>
+    {% endif %}
+  </nav>
+</header>
+
+<main class="wrap {% block wrapclass %}{% endblock %}">
+  {% with msgs = get_flashed_messages(with_categories=true) %}
+    {% for category, text in msgs %}
+      <div class="flash flash--{{ 'error' if category == 'error' else 'ok' }}">{{ text }}</div>
+    {% endfor %}
+  {% endwith %}
+  {% block content %}{% endblock %}
+</main>
+
+{% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}Agents — multiai{% endblock %}
+
+{% block content %}
+<div class="split">
+  <div class="panel">
+    <div class="panel__head">
+      <h2>Agents</h2>
+      <span class="panel__note">Each one is a model plus a role it plays in the room</span>
+    </div>
+    <div class="panel__body">
+      {% if agents %}
+        <ul class="roster">
+          {% for a in agents %}
+            <li>
+              <span class="rail" style="background:{{ a.color }}"></span>
+              <span class="who">
+                <b>{{ a.name }}</b>
+                <span>{{ a.provider|provider_label }} · {{ a.model }}
+                  {%- if a.role %} · {{ a.role }}{% endif %}
+                  {%- if not a.credential %} · no key attached{% endif %}</span>
+              </span>
+              <form method="post" action="{{ url_for('main.delete_agent', agent_id=a.id) }}">
+                <button class="btn btn--danger btn--small" type="submit">Remove</button>
+              </form>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <div class="empty">
+          <h3>Nobody in the room yet</h3>
+          <p>Add two or three agents from different vendors. Different training
+             makes for a real argument; three copies of one model mostly agree
+             with themselves.</p>
+          <p style="margin:0">Suggested line-up:
+            {% for name, provider, model, role, prompt in starters %}
+              <b>{{ name }}</b> as {{ role|lower }}{{ ", " if not loop.last else "." }}
+            {% endfor %}
+          </p>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel__head"><h2>Add an agent</h2></div>
+    <div class="panel__body">
+      <form method="post">
+        <div class="field">
+          <label for="name">Name in the room</label>
+          <input id="name" name="name" type="text" required maxlength="60"
+                 placeholder="e.g. Ada">
+          <p class="hint">Other agents address it by this name.</p>
+        </div>
+        <div class="field">
+          <label for="provider">Provider</label>
+          <select id="provider" name="provider" required>
+            {% for key, label in providers %}
+              <option value="{{ key }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="model">Model</label>
+          <input id="model" name="model" type="text" required list="model-list"
+                 placeholder="claude-sonnet-4-5">
+          <datalist id="model-list">
+            {% for key, models in suggested.items() %}
+              {% for m in models %}<option value="{{ m }}">{% endfor %}
+            {% endfor %}
+          </datalist>
+          <p class="hint">Free text — type any model name the provider accepts.</p>
+        </div>
+        <div class="field">
+          <label for="credential_id">API key</label>
+          <select id="credential_id" name="credential_id">
+            <option value="">Use the server key, if one is set</option>
+            {% for c in creds %}
+              <option value="{{ c.id }}">{{ c.label }} ({{ c.provider|provider_label }})</option>
+            {% endfor %}
+          </select>
+          {% if not creds %}
+            <p class="hint"><a href="{{ url_for('main.keys') }}">Add a key</a> first
+               if the server has none.</p>
+          {% endif %}
+        </div>
+        <div class="field">
+          <label for="role">Role</label>
+          <input id="role" name="role" type="text" maxlength="120"
+                 placeholder="Sceptic, cost analyst, security reviewer…">
+        </div>
+        <div class="field">
+          <label for="system_prompt">Standing instructions</label>
+          <textarea id="system_prompt" name="system_prompt" rows="3"
+                    placeholder="Anything this agent should always do. Panel rules are added automatically."></textarea>
+        </div>
+        <div class="field field-row">
+          <div>
+            <label for="temperature">Temperature</label>
+            <input id="temperature" name="temperature" type="number" step="0.1"
+                   min="0" max="2" value="0.7">
+          </div>
+          <div>
+            <label for="max_tokens">Max tokens per turn</label>
+            <input id="max_tokens" name="max_tokens" type="number" min="200"
+                   max="8000" value="1200">
+          </div>
+        </div>
+        <button class="btn btn--primary" type="submit" style="margin-top:16px">
+          Add agent
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

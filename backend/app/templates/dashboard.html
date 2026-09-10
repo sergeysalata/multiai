@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}Groups — multiai{% endblock %}
+
+{% block content %}
+<div class="split">
+  <div>
+    <div class="panel">
+      <div class="panel__head">
+        <h2>Your groups</h2>
+        <span class="panel__note">{{ groups|length }} total</span>
+      </div>
+      <div class="panel__body">
+        {% if groups %}
+          <div class="card-list">
+            {% for g in groups %}
+              <a href="{{ url_for('main.group', group_id=g.id) }}">
+                <b>{{ g.name }}</b>
+                <span>
+                  {{ g.members|length }} agent{{ '' if g.members|length == 1 else 's' }}
+                  · {{ g.rounds }} round{{ '' if g.rounds == 1 else 's' }}
+                  · {{ g.discussions|length }} question{{ '' if g.discussions|length == 1 else 's' }}
+                </span>
+              </a>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="empty">
+            <h3>No groups yet</h3>
+            <p style="margin:0">A group is a room of agents that stays together.
+               Make one for a recurring kind of problem — architecture calls,
+               hiring decisions, debugging.</p>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if recent %}
+    <div class="panel">
+      <div class="panel__head"><h2>Recent questions</h2></div>
+      <div class="panel__body">
+        <div class="card-list">
+          {% for d in recent %}
+            <a href="{{ url_for('main.group', group_id=d.group_id, discussion=d.id) }}">
+              <b>{{ d.question[:110] }}{{ '…' if d.question|length > 110 }}</b>
+              <span>{{ d.group.name }} ·
+                <span class="status-dot" data-status="{{ d.status }}">{{ d.status }}</span>
+              </span>
+            </a>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="stack">
+    <div class="panel">
+      <div class="panel__head"><h2>New group</h2></div>
+      <div class="panel__body">
+        <form method="post" action="{{ url_for('main.create_group') }}">
+          <div class="field">
+            <label for="name">Name</label>
+            <input id="name" name="name" type="text" required
+                   placeholder="Architecture review">
+          </div>
+          <div class="field">
+            <label for="purpose">What this group is for</label>
+            <input id="purpose" name="purpose" type="text"
+                   placeholder="Optional — shown to you, not the models">
+          </div>
+          <div class="field">
+            <label for="rounds">Rounds of debate</label>
+            <input id="rounds" name="rounds" type="number" min="1" max="4" value="2">
+            <p class="hint">Round 1 is opening positions. Every round after that is
+               cross-examination.</p>
+          </div>
+          <button class="btn btn--primary" type="submit" style="margin-top:14px">
+            Create group
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel__head">
+        <h2>Your agents</h2>
+        <a class="panel__note" href="{{ url_for('main.agents') }}">Manage</a>
+      </div>
+      <div class="panel__body">
+        {% if agents %}
+          <ul class="roster">
+            {% for a in agents %}
+              <li>
+                <span class="rail" style="background:{{ a.color }}"></span>
+                <span class="who">
+                  <b>{{ a.name }}</b>
+                  <span>{{ a.provider|provider_label }} · {{ a.model }}</span>
+                </span>
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p style="margin:0">No agents yet.
+             <a href="{{ url_for('main.agents') }}">Add your first one</a>.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

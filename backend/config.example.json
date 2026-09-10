@@ -1,0 +1,50 @@
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 30303,
+    "url_prefix": "/api",
+    "public_origin": "https://multiai.online",
+    "workers": 3,
+    "threads": 16,
+    "request_timeout_seconds": 180
+  },
+
+  "database": {
+    "host": "127.0.0.1",
+    "port": 5432,
+    "name": "multiai",
+    "user": "multiai",
+    "password": "change-this-password",
+    "sslmode": "prefer",
+    "pool_size": 5,
+    "max_overflow": 10,
+    "pool_recycle_seconds": 280
+  },
+
+  "security": {
+    "secret_key": "",
+    "encryption_key": "",
+    "session_cookie_secure": true,
+    "min_password_length": 10
+  },
+
+  "limits": {
+    "max_rounds": 4,
+    "max_agents_per_group": 6,
+    "provider_timeout_seconds": 120,
+    "max_transcript_chars": 24000,
+    "max_upload_bytes": 2097152
+  },
+
+  "providers": {
+    "fallback_keys": {
+      "anthropic": "",
+      "openai": "",
+      "gemini": ""
+    }
+  },
+
+  "logging": {
+    "level": "INFO"
+  }
+}

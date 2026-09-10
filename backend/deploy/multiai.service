@@ -1,0 +1,36 @@
+# /etc/systemd/system/multiai.service
+#
+#   sudo cp deploy/multiai.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now multiai
+#   sudo systemctl status multiai
+#   journalctl -u multiai -f
+
+[Unit]
+Description=multiai.online backend (Flask + gunicorn, port 30303)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=multiai
+Group=multiai
+WorkingDirectory=/srv/multiai
+Environment=MULTIAI_CONFIG=/srv/multiai/config.json
+# Optional: keep secrets out of config.json and pass them here instead.
+# Environment=MULTIAI_SECRET_KEY=...
+# Environment=MULTIAI_ENCRYPTION_KEY=...
+# Environment=MULTIAI_DB_PASSWORD=...
+ExecStart=/srv/multiai/.venv/bin/gunicorn -c deploy/gunicorn.conf.py wsgi:app
+ExecReload=/bin/kill -s HUP $MAINPID
+Restart=always
+RestartSec=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/srv/multiai
+
+[Install]
+WantedBy=multi-user.target

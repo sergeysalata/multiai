@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}multiai — a panel of AI models that argue it out{% endblock %}
+
+{% block content %}
+<section class="hero">
+  <h1>One hard problem. Several models. One answer.</h1>
+  <p>Build a group, seat Claude, ChatGPT, Gemini or any model you host yourself,
+     and ask your question once. Each model reads what the others just said and
+     answers it directly. The chair writes the conclusion.</p>
+  <div class="hero__actions">
+    <a class="btn btn--primary" href="{{ url_for('auth.register') }}"
+       style="text-decoration:none">Create account</a>
+    <a class="btn btn--quiet" href="{{ url_for('auth.login') }}"
+       style="text-decoration:none">Sign in</a>
+  </div>
+</section>
+
+<section class="relay">
+  <div class="round-band"><b>Round 1</b> opening positions</div>
+
+  <div class="relay__step">
+    <div class="relay__seat" style="--speaker:#2F2BA8">Claude<span>seat 1 · reads the question</span></div>
+    <p>Answers first. Nothing else is in the room yet.</p>
+  </div>
+
+  <div class="relay__step">
+    <div class="relay__seat" style="--speaker:#0E7C6B">Gemini<span>seat 2 · reads the question + Claude</span></div>
+    <p>Gets Claude's full answer as its own input, so it can pick the argument up
+       instead of starting over.</p>
+  </div>
+
+  <div class="relay__step">
+    <div class="relay__seat" style="--speaker:#A2452F">ChatGPT<span>seat 3 · reads everything above</span></div>
+    <p>Sees both turns and can side with one, or take apart both.</p>
+  </div>
+
+  <div class="round-band"><b>Round 2</b> cross-examination</div>
+
+  <div class="relay__step">
+    <div class="relay__seat" style="--speaker:#2F2BA8">Claude<span>seat 1 again</span></div>
+    <p>Now holds every turn from round 1. It is told to name the weakest claim in
+       the room, challenge it, and say what it changed in its own position.</p>
+  </div>
+
+  <div class="round-band"><b>Verdict</b> written by the chair</div>
+
+  <div class="relay__step">
+    <div class="relay__seat" style="--speaker:#172033">Chair<span>reads the whole record</span></div>
+    <p>One model you nominate reads the entire transcript and writes the answer:
+       the recommendation, the reasoning that survived, where the panel split, and
+       what would change its mind.</p>
+  </div>
+</section>
+
+<section class="split">
+  <div class="panel">
+    <div class="panel__head"><h2>Bring your own keys</h2></div>
+    <div class="panel__body">
+      <p>Paste an Anthropic, OpenAI or Google key and it is encrypted before it
+         reaches the database. Delete it any time. Calls are billed by the vendor
+         directly to you.</p>
+      <p style="margin:0">Running something self-hosted? Point a custom agent at any
+         OpenAI-compatible URL — Ollama, vLLM, OpenRouter, your own gateway.</p>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel__head"><h2>What it costs you</h2></div>
+    <div class="panel__body">
+      <p>A three-agent, two-round debate is seven model calls: six turns plus the
+         verdict. Long transcripts mean long prompts, so keep groups small and
+         rounds few unless the problem earns more.</p>
+    </div>
+  </div>
+</section>
+{% endblock %}

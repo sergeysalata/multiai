@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Keys — multiai{% endblock %}
+
+{% block content %}
+<div class="split">
+  <div class="panel">
+    <div class="panel__head">
+      <h2>Provider keys</h2>
+      <span class="panel__note">Encrypted before they are stored</span>
+    </div>
+    <div class="panel__body">
+      {% if creds %}
+        {% for c in creds %}
+          <div class="key-row">
+            <span class="who">
+              <b>{{ c.label }}</b><br>
+              <code>{{ c.provider|provider_label }} · {{ c.key_hint }}</code>
+              {% if c.base_url %}<br><code>{{ c.base_url }}</code>{% endif %}
+            </span>
+            <form method="post" action="{{ url_for('main.delete_key', cred_id=c.id) }}">
+              <button class="btn btn--danger btn--small" type="submit">Delete</button>
+            </form>
+          </div>
+        {% endfor %}
+      {% else %}
+        <div class="empty">
+          <h3>No keys stored</h3>
+          <p style="margin:0">Add a key from any provider you want on the panel.
+             Vendors bill your account directly for every turn its model takes.</p>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel__head"><h2>Add a key</h2></div>
+    <div class="panel__body">
+      <form method="post">
+        <div class="field">
+          <label for="provider">Provider</label>
+          <select id="provider" name="provider" required>
+            {% for key, label in providers %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="label">Label</label>
+          <input id="label" name="label" type="text" placeholder="Work account">
+        </div>
+        <div class="field">
+          <label for="api_key">API key</label>
+          <input id="api_key" name="api_key" type="password" required
+                 autocomplete="off" spellcheck="false">
+        </div>
+        <div class="field">
+          <label for="base_url">Base URL</label>
+          <input id="base_url" name="base_url" type="text"
+                 placeholder="https://openrouter.ai/api/v1">
+          <p class="hint">Custom models only. Any OpenAI-compatible endpoint —
+             Ollama, vLLM, OpenRouter, your own gateway.</p>
+        </div>
+        <button class="btn btn--primary" type="submit" style="margin-top:16px">
+          Save key
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

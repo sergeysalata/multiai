@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% block title %}{{ group.name }} — multiai{% endblock %}
+
+{% block content %}
+<div style="display:flex; align-items:baseline; gap:14px; margin-bottom:20px; flex-wrap:wrap">
+  <h1 style="margin:0">{{ group.name }}</h1>
+  {% if group.purpose %}<span style="color:var(--ink-soft)">{{ group.purpose }}</span>{% endif %}
+  <span style="margin-left:auto">
+    {% for a in group.seated_agents %}
+      <span class="seat-tag" style="margin-left:10px">
+        <i style="background:{{ a.color }}"></i>{{ a.name }}
+      </span>
+    {% endfor %}
+  </span>
+</div>
+
+<div class="split">
+  <div>
+    <div class="panel">
+      <div class="panel__head">
+        <h2>Ask the panel</h2>
+        <span class="panel__note">
+          {{ group.seated_agents|length }} agents ×
+          {{ group.rounds }} rounds + verdict =
+          {{ group.seated_agents|length * group.rounds + 1 }} model calls
+        </span>
+      </div>
+      <div class="panel__body">
+        <form class="composer" id="ask-form"
+              data-endpoint="{{ url_for('api.ask', group_id=group.id) }}">
+          <label for="question">The problem</label>
+          <textarea id="question" name="question" rows="4"
+                    placeholder="State the problem, the constraints, and what a good answer would look like."
+                    {% if not group.seated_agents %}disabled{% endif %}></textarea>
+          <div class="composer__bar">
+            <div style="width:160px">
+              <label for="rounds">Rounds</label>
+              <input id="rounds" name="rounds" type="number" min="1"
+                     max="{{ max_rounds }}" value="{{ group.rounds }}">
+            </div>
+            <span class="stage" id="stage"><i></i><span id="stage-text"></span></span>
+            <span class="spacer"></span>
+            <button class="btn btn--quiet" type="button" id="stop-btn" hidden>Stop</button>
+            <button class="btn btn--primary" type="submit" id="ask-btn"
+                    {% if not group.seated_agents %}disabled{% endif %}>Start the debate</button>
+          </div>
+          {% if not group.seated_agents %}
+            <p class="hint">Seat at least one agent before asking. Two or three from
+               different vendors makes for a better argument.</p>
+          {% endif %}
+        </form>
+      </div>
+    </div>
+
+    <div class="transcript" id="transcript"
+         data-poll="{{ url_for('api.messages', discussion_id=0) }}"
+         data-stream="{{ url_for('api.stream', discussion_id=0) }}"
+         data-cancel="{{ url_for('api.cancel', discussion_id=0) }}"
+         data-discussion="{{ discussion.id if discussion else '' }}"
+         data-status="{{ discussion.status if discussion else '' }}">
+      {% if discussion %}
+        {% set ns = namespace(round=-1) %}
+        {% for m in discussion.messages %}
+          {% if m.role == "question" %}
+            <div class="turn turn--question">
+              <div class="turn__who" style="--speaker:#172033">
+                <b>{{ m.speaker }}</b><span>asked</span>
+              </div>
+              <div class="turn__body">{{ m.content }}</div>
+            </div>
+          {% elif m.role in ("turn", "error") %}
+            {% if m.round_no != ns.round %}
+              {% set ns.round = m.round_no %}
+              <div class="round-band">
+                <b>Round {{ m.round_no }}</b>
+                {{ "opening positions" if m.round_no == 1 else "cross-examination" }}
+              </div>
+            {% endif %}
+            <div class="turn {{ 'turn--error' if m.role == 'error' }}">
+              <div class="turn__who" style="--speaker:{{ m.color }}">
+                <b>{{ m.speaker }}</b>
+                <span>{{ m.provider|provider_label }} · {{ m.model }}</span>
+                {% if m.input_chars %}
+                  <div class="turn__meta">read {{ m.input_chars }} chars of transcript</div>
+                {% endif %}
+              </div>
+              <div class="turn__body">
+                {% if m.role == "error" %}{{ m.content }}{% else %}{{ m.content|md|safe }}{% endif %}
+              </div>
+            </div>
+          {% elif m.role == "verdict" %}
+            <div class="verdict">
+              <h2>Verdict</h2>
+              <div class="verdict__by">written by {{ m.speaker }}
+                ({{ m.provider|provider_label }} · {{ m.model }}) after reading the whole record</div>
+              <div class="verdict__body">{{ m.content|md|safe }}</div>
+            </div>
+          {% endif %}
+        {% endfor %}
+        {% if discussion.error %}
+          <div class="flash flash--error" style="margin-top:20px">{{ discussion.error }}</div>
+        {% endif %}
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="stack">
+    <div class="panel">
+      <div class="panel__head"><h2>In the room</h2></div>
+      <div class="panel__body">
+        {% if group.members %}
+          <ul class="roster">
+            {% for m in group.members %}
+              <li>
+                <span class="rail" style="background:{{ m.agent.color }}"></span>
+                <span class="who">
+                  <b>{{ m.agent.name }}</b>
+                  <span>seat {{ loop.index }} · {{ m.agent.provider|provider_label }}
+                        · {{ m.agent.model }}</span>
+                </span>
+                <form method="post"
+                      action="{{ url_for('main.remove_member', group_id=group.id, agent_id=m.agent_id) }}">
+                  <button class="btn btn--danger btn--small" type="submit">Remove</button>
+                </form>
+              </li>
+            {% endfor %}
+          </ul>
+          <p class="hint">Seat order is speaking order. Seat 1 opens each round;
+             everyone after it reads the turns already taken.</p>
+        {% else %}
+          <p style="margin:0">Empty room. Add an agent below.</p>
+        {% endif %}
+
+        {% set choosable = available | rejectattr('id', 'in', seated_ids) | list %}
+        {% if choosable %}
+          <form method="post" action="{{ url_for('main.add_member', group_id=group.id) }}"
+                style="margin-top:14px; display:flex; gap:8px">
+            <select name="agent_id" aria-label="Agent to add">
+              {% for a in choosable %}
+                <option value="{{ a.id }}">{{ a.name }} — {{ a.provider|provider_label }}</option>
+              {% endfor %}
+            </select>
+            <button class="btn btn--quiet" type="submit">Add</button>
+          </form>
+        {% else %}
+          <p class="hint" style="margin-top:14px">
+            <a href="{{ url_for('main.agents') }}">Create another agent</a> to seat it here.
+          </p>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel__head"><h2>Group settings</h2></div>
+      <div class="panel__body">
+        <form method="post" action="{{ url_for('main.group_settings', group_id=group.id) }}">
+          <div class="field">
+            <label for="g-name">Name</label>
+            <input id="g-name" name="name" type="text" value="{{ group.name }}">
+          </div>
+          <div class="field">
+            <label for="g-purpose">Purpose</label>
+            <input id="g-purpose" name="purpose" type="text" value="{{ group.purpose }}">
+          </div>
+          <div class="field">
+            <label for="g-rounds">Default rounds</label>
+            <input id="g-rounds" name="rounds" type="number" min="1"
+                   max="{{ max_rounds }}" value="{{ group.rounds }}">
+          </div>
+          <div class="field">
+            <label for="g-chair">Who writes the verdict</label>
+            <select id="g-chair" name="synthesizer_agent_id">
+              <option value="">Seat 1</option>
+              {% for a in group.seated_agents %}
+                <option value="{{ a.id }}"
+                  {{ 'selected' if group.synthesizer_agent_id == a.id }}>{{ a.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <button class="btn btn--quiet" type="submit" style="margin-top:14px">Save changes</button>
+        </form>
+      </div>
+    </div>
+
+    {% if group.discussions %}
+    <div class="panel">
+      <div class="panel__head"><h2>Earlier questions</h2></div>
+      <div class="panel__body">
+        <div class="card-list">
+          {% for d in group.discussions[:10] %}
+            <a href="{{ url_for('main.group', group_id=group.id, discussion=d.id) }}">
+              <b>{{ d.question[:80] }}{{ '…' if d.question|length > 80 }}</b>
+              <span class="status-dot" data-status="{{ d.status }}">{{ d.status }}</span>
+            </a>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <form method="post" action="{{ url_for('main.delete_group', group_id=group.id) }}"
+          onsubmit="return confirm('Delete this group and every discussion in it?')">
+      <button class="btn btn--danger btn--small" type="submit">Delete group</button>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/debate.js') }}" defer></script>
+{% endblock %}

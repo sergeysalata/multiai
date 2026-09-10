@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}{{ code }} — multiai{% endblock %}
+{% block wrapclass %}wrap--narrow{% endblock %}
+{% block content %}
+<div class="empty">
+  <h3>{{ code }}</h3>
+  <p>{{ message }}</p>
+  <p style="margin:0"><a href="{{ url_for('main.landing') }}">Back to your groups</a></p>
+</div>
+{% endblock %}

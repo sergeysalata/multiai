@@ -1,0 +1,33 @@
+# /var/www/multiai.online/.htaccess
+# Only takes effect if the vhost sets "AllowOverride All" for this directory.
+# Everything here is optional — the site works without it.
+
+# Routing is hash-based (#/groups/3), so no rewrite rules are needed: every
+# URL the browser requests is really just /index.html.
+
+<IfModule mod_mime.c>
+    AddType image/svg+xml .svg
+    AddType application/javascript .js
+</IfModule>
+
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/css application/javascript image/svg+xml
+</IfModule>
+
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType text/css                "access plus 7 days"
+    ExpiresByType application/javascript  "access plus 7 days"
+    ExpiresByType image/svg+xml           "access plus 30 days"
+    # index.html must not be cached, or a deploy will not reach returning visitors.
+    <FilesMatch "\.html$">
+        ExpiresDefault "access plus 0 seconds"
+        Header set Cache-Control "no-cache, must-revalidate"
+    </FilesMatch>
+</IfModule>
+
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+</IfModule>
+
+Options -Indexes
