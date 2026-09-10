@@ -21,6 +21,10 @@ class User(UserMixin, db.Model):
     password_hash = db.Column(db.String(255), nullable=True)
     google_sub = db.Column(db.String(64), unique=True, nullable=True, index=True)
     avatar_url = db.Column(db.String(512), nullable=False, default="")
+    # Put into every agent's system prompt, so the room knows who it is
+    # talking to instead of pitching every answer at an unknown reader.
+    about = db.Column(db.Text, nullable=False, default="")
+    locale = db.Column(db.String(32), nullable=False, default="")
     last_login_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
 
@@ -142,6 +146,9 @@ class Group(db.Model):
     name = db.Column(db.String(120), nullable=False)
     purpose = db.Column(db.Text, nullable=False, default="")
     rounds = db.Column(db.Integer, nullable=False, default=2)
+    # Stop a free-running conversation when replies get short. A guess, and
+    # occasionally a wrong one, so it is switchable per chat.
+    auto_stop = db.Column(db.Boolean, nullable=False, default=True)
     synthesizer_agent_id = db.Column(
         db.Integer, db.ForeignKey("agents.id", ondelete="SET NULL"), nullable=True
     )

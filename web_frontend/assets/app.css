@@ -567,3 +567,39 @@ label.check input { width: auto; margin: 0; }
 }
 .site-foot a { color: var(--ink-faint); text-decoration: none; }
 .site-foot a:hover { color: var(--ink); text-decoration: underline; }
+
+/* ---------------------------------------------------------------- copy --- */
+/* Always visible, just quiet. Hiding it until hover means nobody finds it,
+   and on a phone there is no hover at all. */
+.turn__copy {
+  margin-top: 8px; margin-left: 34px;
+  border: 1px solid var(--rule); background: var(--surface);
+  color: var(--ink-faint); font: inherit; font-size: .72rem;
+  padding: 3px 10px; border-radius: 3px; cursor: pointer;
+  transition: color .12s, border-color .12s;
+}
+.turn:hover .turn__copy { border-color: var(--rule-strong); color: var(--ink-soft); }
+.turn__copy:hover { background: #e6e9ed; color: var(--ink); border-color: var(--ink-faint); }
+
+/* ----------------------------------------------------------- chat state --- */
+.chat-row a { display: block; }
+
+.chat-state {
+  display: inline-flex; align-items: center; gap: 7px;
+  margin-top: 8px; font-size: .78rem; color: var(--ink-faint);
+}
+.chat-state i {
+  width: 7px; height: 7px; border-radius: 50%; flex: none;
+  background: var(--rule-strong);
+}
+.chat-state[data-state="running"] { color: var(--amber); }
+.chat-state[data-state="running"] i {
+  background: var(--amber); animation: pulse 1.4s ease-in-out infinite;
+}
+.chat-state[data-state="idle"] i { background: var(--teal); }
+.chat-state[data-state="failed"] { color: var(--rust); }
+.chat-state[data-state="failed"] i { background: var(--rust); }
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-state[data-state="running"] i { animation: none; }
+}

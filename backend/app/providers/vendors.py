@@ -108,7 +108,8 @@ class AnthropicProvider(BaseProvider):
             )
         blocks = data.get("content", []) or []
         parts = [b.get("text", "") for b in blocks if b.get("type") == "text"]
-        text = clean_output("\n".join(p for p in parts if p))
+        produced = "\n".join(p for p in parts if p)
+        text = clean_output(produced)
 
         usage = data.get("usage") or {}
         self.last_meta = {
@@ -119,6 +120,9 @@ class AnthropicProvider(BaseProvider):
             # Written on the first turn, read on every turn after it.
             "cache_write": usage.get("cache_creation_input_tokens"),
             "cache_read": usage.get("cache_read_input_tokens"),
+            # Before cleanup: a long reply that was mostly scaffolding should
+            # not read as the model having little to say.
+            "raw_chars": len(produced.strip()),
         }
 
         if not text:
@@ -279,13 +283,15 @@ class OpenAIProvider(BaseProvider):
             )
         try:
             choice = data["choices"][0]
-            text = clean_output(choice["message"]["content"] or "")
+            produced = choice["message"]["content"] or ""
+            text = clean_output(produced)
         except (KeyError, IndexError, TypeError) as exc:
             raise ProviderError(f"{self.label} returned an unexpected shape.") from exc
 
         usage = data.get("usage") or {}
         finish = choice.get("finish_reason")
         self.last_meta = {
+            "raw_chars": len(produced.strip()),
             "stop_reason": finish,
             "cache_read": (usage.get("prompt_tokens_details") or {}).get(
                 "cached_tokens"
@@ -455,8 +461,38 @@ class GeminiProvider(BaseProvider):
             raise ProviderError(
                 f"Gemini returned no candidates{f' (blocked: {blocked})' if blocked else ''}."
             )
-        parts = candidates[0].get("content", {}).get("parts", [])
-        text = clean_output("\n".join(p.get("text", "") for p in parts))
+        parts = candidates[0].get("content", {}).get("parts", []) or []
+
+        # Reasoning arrives as its own parts, flagged "thought". They are the
+        # model's scratchpad — the plan, the drafts, the self-criticism — and
+        # concatenating them onto the answer is what produced all the visible
+        # "thinking out loud" in the transcript.
+        spoken, thought = [], []
+        for part in parts:
+            body = part.get("text") or ""
+            if not body:
+                continue
+            (thought if part.get("thought") else spoken).append(body)
+
+        produced = "\n".join(spoken)
+        thinking = "\n".join(thought)
+
+        self.last_meta = dict(
+            self.last_meta,
+            raw_chars=len(produced.strip()),
+            thought_chars=len(thinking.strip()),
+            parts=len(parts),
+        )
+
+        if not produced.strip() and thinking.strip():
+            # Everything it produced was reasoning: the budget ran out before
+            # it wrote an answer. Say that rather than showing the scratchpad.
+            raise ProviderError(
+                f"Gemini spent its whole {max_tokens}-token budget thinking and "
+                "never wrote an answer. Raise 'Max tokens per turn' on this agent."
+            )
+
+        text = clean_output(produced)
         if not text:
             raise ProviderError("Gemini returned an empty reply.")
         return text
@@ -490,6 +526,34 @@ def _gemini_contents(messages, documents, fallback_text, inline_system=""):
 
 
 GeminiProvider._contents = staticmethod(_gemini_contents)
+
+
+class DeepSeekProvider(OpenAIProvider):
+    """DeepSeek speaks the OpenAI chat-completions dialect.
+
+    Worth knowing about deepseek-reasoner: its chain of thought comes back in
+    a separate `reasoning_content` field, not in `content`. Reading only
+    `content`, as the OpenAI adapter does, keeps the scratchpad out of the
+    room without any extra work.
+    """
+
+    key = "deepseek"
+    label = "DeepSeek"
+    default_model = "deepseek-chat"
+    endpoint = "https://api.deepseek.com/v1/chat/completions"
+    api_base = "https://api.deepseek.com/v1"
+    needs_base_url = False
+    # No server-side search tool on this API.
+    supports_documents = False
+
+    def complete(self, system, messages, temperature, max_tokens,
+                 documents=None, document_fallback="", cache_prefix="",
+                 web_search=False):
+        # Documents fall back to their extracted text; search is not offered.
+        return super().complete(
+            system, messages, temperature, max_tokens,
+            None, document_fallback or cache_prefix, cache_prefix, False,
+        )
 
 
 class CustomProvider(OpenAIProvider):
@@ -594,6 +658,18 @@ def _gemini_list(self):
     return models
 
 
+def _deepseek_list(self):
+    data = self._get(
+        f"{self.api_base}/models",
+        headers={"Authorization": f"Bearer {self.api_key}"},
+    )
+    rows = data.get("data", [])
+    return [
+        {"id": row.get("id"), "label": row.get("id")}
+        for row in rows if row.get("id")
+    ]
+
+
 def _custom_list(self):
     if not self.base_url:
         raise ProviderError("This custom agent has no base URL set.")
@@ -601,6 +677,7 @@ def _custom_list(self):
 
 
 AnthropicProvider.list_models = _anthropic_list
+DeepSeekProvider.list_models = _deepseek_list
 OpenAIProvider.list_models = _openai_list
 GeminiProvider.list_models = _gemini_list
 CustomProvider.list_models = _custom_list

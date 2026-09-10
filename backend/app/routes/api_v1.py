@@ -131,6 +131,7 @@ def agent_json(a):
         "temperature": a.temperature,
         "max_tokens": a.max_tokens,
         "color": a.color,
+        "web_search": a.web_search,
         "credential_id": a.credential_id,
         "has_key": a.credential_id is not None
         or bool(current_app.config.get("FALLBACK_KEYS", {}).get(a.provider)),
@@ -148,15 +149,26 @@ def credential_json(c):
     }
 
 
-def group_json(g, detail=False):
+def group_json(g, detail=False, message_count=None):
+    latest = g.discussions[0] if g.discussions else None
     data = {
         "id": g.id,
         "name": g.name,
         "purpose": g.purpose,
         "rounds": g.rounds,
+        "auto_stop": g.auto_stop,
         "synthesizer_agent_id": g.synthesizer_agent_id,
         "agent_count": len(g.members),
         "discussion_count": len(g.discussions),
+        # What the chat is doing right now, for the list page.
+        "status": latest.status if latest else "empty",
+        "stage": latest.stage if latest else "",
+        "mode": latest.mode if latest else "step",
+        "last_activity": (
+            (latest.finished_at or latest.created_at).isoformat() + "Z"
+            if latest else None
+        ),
+        "message_count": message_count,
     }
     if detail:
         data["members"] = [
@@ -183,6 +195,19 @@ def discussion_json(d, with_messages=False):
         data["messages"] = [m.as_dict(html=render(m.content)) for m in d.messages]
         data["files"] = [f.as_dict() for f in d.attachments]
     return data
+
+
+def _user_json():
+    return {
+        "id": current_user.id,
+        "email": current_user.email,
+        "display_name": current_user.display_name,
+        "about": current_user.about,
+        "locale": current_user.locale,
+        "avatar_url": current_user.avatar_url,
+        "has_password": current_user.has_password,
+        "via_google": bool(current_user.google_sub),
+    }
 
 
 def owned_group(group_id):
@@ -218,14 +243,7 @@ def get_session():
         ),
     }
     if current_user.is_authenticated:
-        payload["user"] = {
-            "id": current_user.id,
-            "email": current_user.email,
-            "display_name": current_user.display_name,
-            "avatar_url": current_user.avatar_url,
-            "has_password": current_user.has_password,
-            "via_google": bool(current_user.google_sub),
-        }
+        payload["user"] = _user_json()
     return jsonify(payload)
 
 
@@ -269,10 +287,40 @@ def login():
                                          "display_name": user.display_name}})
 
 
+@bp.patch("/account")
+@auth_required
+def update_account():
+    """Change how you appear in the room.
+
+    Past messages keep the name they were sent under: the transcript is a
+    record of what happened, and rewriting it would make old turns claim to
+    have been said by someone who did not exist yet.
+    """
+    data = body()
+
+    if "display_name" in data:
+        name = (data.get("display_name") or "").strip()
+        if not name:
+            return fail("Enter a name.")
+        current_user.display_name = name[:80]
+
+    if "about" in data:
+        current_user.about = (data.get("about") or "").strip()[:4000]
+
+    if "locale" in data:
+        current_user.locale = (data.get("locale") or "").strip()[:32]
+
+    db.session.commit()
+    return jsonify({"user": _user_json()})
+
+
 @bp.post("/auth/logout")
 def logout():
-    logout_user()
+    # Order matters. logout_user() marks the "remember me" cookie for deletion
+    # by writing into the session; clearing the session afterwards erases that
+    # marker, the cookie survives, and the next request signs the user back in.
     session.clear()
+    logout_user()
     return jsonify({"ok": True})
 
 
@@ -484,7 +532,26 @@ def list_groups():
         .order_by(Group.created_at.desc())
         .all()
     )
-    return jsonify({"groups": [group_json(g) for g in rows]})
+
+    # One grouped count rather than walking every message of every chat.
+    counts = {}
+    if rows:
+        counted = (
+            db.session.query(
+                Discussion.group_id, db.func.count(Message.id)
+            )
+            .join(Message, Message.discussion_id == Discussion.id)
+            .filter(Discussion.group_id.in_([g.id for g in rows]))
+            .group_by(Discussion.group_id)
+            .all()
+        )
+        counts = {group_id: total for group_id, total in counted}
+
+    return jsonify({
+        "groups": [
+            group_json(g, message_count=counts.get(g.id, 0)) for g in rows
+        ]
+    })
 
 
 @bp.post("/groups")
@@ -523,6 +590,8 @@ def update_group(group_id):
         group.purpose = (data["purpose"] or "").strip()
     if "rounds" in data:
         group.rounds = max(1, min(int(data["rounds"]), current_app.config["MAX_ROUNDS"]))
+    if "auto_stop" in data:
+        group.auto_stop = bool(data["auto_stop"])
     if "synthesizer_agent_id" in data:
         chair = data["synthesizer_agent_id"]
         group.synthesizer_agent_id = int(chair) if chair else None

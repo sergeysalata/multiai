@@ -103,6 +103,8 @@ REQUIRED_COLUMNS = {
     ("attachments", "extracted"): "sql/004_files.sql",
     ("agents", "avatar_preset"): "sql/005_avatars.sql",
     ("agents", "web_search"): "sql/006_tools.sql",
+    ("groups", "auto_stop"): "sql/007_flow_stop.sql",
+    ("users", "about"): "sql/009_profile.sql",
 }
 
 

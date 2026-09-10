@@ -2,13 +2,20 @@ from .base import BaseProvider, ProviderError
 from .vendors import (
     AnthropicProvider,
     CustomProvider,
+    DeepSeekProvider,
     GeminiProvider,
     OpenAIProvider,
 )
 
 REGISTRY = {
     p.key: p
-    for p in (AnthropicProvider, OpenAIProvider, GeminiProvider, CustomProvider)
+    for p in (
+        AnthropicProvider,
+        OpenAIProvider,
+        GeminiProvider,
+        DeepSeekProvider,
+        CustomProvider,
+    )
 }
 
 # Shown in the "add agent" form. Free text is allowed too — model names move
@@ -21,6 +28,7 @@ SUGGESTED_MODELS = {
     ],
     "openai": ["gpt-4o", "gpt-4o-mini", "o3-mini"],
     "gemini": ["gemini-2.0-flash", "gemini-2.0-pro", "gemini-1.5-pro"],
+    "deepseek": ["deepseek-chat", "deepseek-reasoner"],
     "custom": [],
 }
 
@@ -28,6 +36,7 @@ PROVIDER_CHOICES = [
     ("anthropic", "Claude"),
     ("openai", "ChatGPT"),
     ("gemini", "Gemini"),
+    ("deepseek", "DeepSeek"),
     ("custom", "Custom model"),
 ]
 

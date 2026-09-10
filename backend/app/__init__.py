@@ -55,6 +55,9 @@ def create_app(config_object=None):
     app.register_blueprint(api_v1_bp)
 
     from .rendering import render as render_markdown
+    from .text_cleanup import set_scaffolding_stripping
+
+    set_scaffolding_stripping(app.config.get("STRIP_SCAFFOLDING", False))
 
     app.jinja_env.filters["provider_label"] = provider_label
     app.jinja_env.filters["md"] = render_markdown
@@ -182,6 +185,8 @@ def register_cli(app):
             ("attachments", "extracted"): "sql/004_files.sql",
             ("agents", "avatar_preset"): "sql/005_avatars.sql",
             ("agents", "web_search"): "sql/006_tools.sql",
+            ("groups", "auto_stop"): "sql/007_flow_stop.sql",
+            ("users", "about"): "sql/009_profile.sql",
         }
         found = set(
             db.session.execute(

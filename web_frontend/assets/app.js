@@ -28,6 +28,8 @@
     discussionId: null, groupId: null,
     status: "idle", mode: "step", lastId: 0,
     faces: {},   // agent id -> agent, so old turns show current avatars
+    raw: {},     // message id -> original text, for the copy button
+    dashPoll: null,  // refreshes the chat list while something is running
   };
 
   // ---------------------------------------------------------------- helpers
@@ -192,6 +194,34 @@
 
   function seatedFaces(members) { return members || []; }
 
+  function timeAgo(iso) {
+    if (!iso) return "";
+    var seconds = (Date.now() - new Date(iso).getTime()) / 1000;
+    if (seconds < 90) return "just now";
+    var minutes = Math.round(seconds / 60);
+    if (minutes < 60) return minutes + "m ago";
+    var hours = Math.round(minutes / 60);
+    if (hours < 24) return hours + "h ago";
+    var days = Math.round(hours / 24);
+    if (days < 7) return days + "d ago";
+    return new Date(iso).toLocaleDateString();
+  }
+
+  // What the chat is doing, in words rather than a database state name.
+  function chatState(g) {
+    if (g.status === "running" || g.status === "queued") {
+      return {
+        key: "running",
+        label: g.stage || (g.mode === "flow" ? "Agents are talking" : "Replying"),
+      };
+    }
+    if (g.status === "failed") return { key: "failed", label: "Stopped on an error" };
+    if (g.status === "empty" || !g.message_count) {
+      return { key: "empty", label: "Nothing said yet" };
+    }
+    return { key: "idle", label: "Waiting for you" };
+  }
+
   function ordinal(n) {
     return ["first", "second", "third", "fourth", "fifth", "sixth"][n - 1] ||
       n + "th";
@@ -257,6 +287,7 @@
 
   async function route() {
     stopStreaming();
+    clearTimeout(live.dashPoll);
     var parts = parseHash();
     var head = parts[0] || "";
 
@@ -268,6 +299,7 @@
 
     if (head === "agents") return viewAgents();
     if (head === "keys") return viewKeys();
+    if (head === "profile" || head === "account") return viewProfile();
     if ((head === "chats" || head === "groups") && parts[1]) {
       // "d" is the older path segment; old links keep working.
       var topicId = (parts[2] === "t" || parts[2] === "d") && parts[3]
@@ -280,6 +312,10 @@
   function syncNav() {
     nav.hidden = !S.user;
     navAnon.hidden = !!S.user;
+    var accountLink = document.getElementById("profile-link");
+    if (accountLink && S.user) {
+      accountLink.textContent = S.user.display_name || "Account";
+    }
     var avatar = document.getElementById("avatar");
     if (avatar) {
       var url = S.user && S.user.avatar_url;
@@ -429,10 +465,22 @@
         '<div class="panel__body">' +
           (groups.length
             ? '<div class="card-list">' + groups.map(function (g) {
+                var state = chatState(g);
+                var facts = [
+                  g.agent_count + " agent" + (g.agent_count === 1 ? "" : "s"),
+                ];
+                if (g.message_count) {
+                  facts.push(g.message_count + " message" +
+                             (g.message_count === 1 ? "" : "s"));
+                }
+                if (g.last_activity && g.message_count) {
+                  facts.push(timeAgo(g.last_activity));
+                }
                 return '<div class="chat-row">' +
-                  '<a href="#/chats/' + g.id + '"><b>' + esc(g.name) + "</b><span>" +
-                  g.agent_count + " agent" + (g.agent_count === 1 ? "" : "s") +
-                  "</span></a>" +
+                  '<a href="#/chats/' + g.id + '"><b>' + esc(g.name) + "</b>" +
+                  "<span>" + esc(facts.join(" · ")) + "</span>" +
+                  '<span class="chat-state" data-state="' + state.key + '">' +
+                  '<i></i>' + esc(state.label) + "</span></a>" +
                   '<button class="btn btn--danger btn--small" data-delete-chat="' +
                   g.id + '" data-name="' + esc(g.name) + '">Delete</button></div>';
               }).join("") + "</div>"
@@ -455,6 +503,16 @@
           "</div></div></div>" +
           agentSidebar(agents) +
         "</div></div>";
+
+    if (groups.some(function (g) {
+      return g.status === "running" || g.status === "queued";
+    })) {
+      clearTimeout(live.dashPoll);
+      live.dashPoll = setTimeout(function () {
+        // Only if the user is still looking at this page.
+        if (!parseHash()[0]) viewDashboard();
+      }, 5000);
+    }
 
     app.querySelectorAll("[data-delete-chat]").forEach(function (button) {
       button.addEventListener("click", async function () {
@@ -933,6 +991,57 @@
     });
   }
 
+  // --------------------------------------------------------------- account
+  function viewProfile() {
+    syncNav();
+    app.className = "wrap wrap--narrow";
+    app.innerHTML =
+      '<div class="panel"><div class="panel__head"><h2>Profile</h2></div>' +
+      '<div class="panel__body"><div id="account-form">' +
+        '<div class="field"><label for="display_name">Name in the room</label>' +
+        '<input id="display_name" name="display_name" type="text" maxlength="80" ' +
+        'value="' + esc(S.user.display_name || "") + '">' +
+        '<p class="hint">What the agents call you, and what appears above your ' +
+        "messages. Messages already sent keep the name they were sent under.</p></div>" +
+
+        '<div class="field"><label for="about">About you</label>' +
+        '<textarea id="about" name="about" rows="5" maxlength="4000" ' +
+        'placeholder="What you work on, what you already know, how you want to ' +
+        'be answered. The agents read this before every reply.">' +
+        esc(S.user.about || "") + "</textarea>" +
+        '<p class="hint">Without this the agents pitch every answer at an ' +
+        "unknown reader. A few lines is enough — your field, your level, " +
+        "whether you want short answers or the reasoning.</p></div>" +
+
+        '<div class="field"><label for="locale">Preferred language</label>' +
+        '<input id="locale" name="locale" type="text" maxlength="32" ' +
+        'placeholder="Leave empty to follow the conversation" value="' +
+        esc(S.user.locale || "") + '"></div>' +
+
+        '<div class="field"><label>Email</label>' +
+        '<input type="text" value="' + esc(S.user.email) + '" disabled>' +
+        '<p class="hint">' +
+        (S.user.via_google ? "Signed in with Google."
+                           : "Signed in with a password.") +
+        "</p></div>" +
+        '<button class="btn btn--primary" id="save-account" type="button" ' +
+        'style="margin-top:14px">Save profile</button>' +
+      "</div></div></div>";
+
+    on("#save-account", "click", async function () {
+      setBusy("#save-account", true, "Saving…");
+      try {
+        var result = await api("/account", {
+          method: "PATCH", data: form("account-form"),
+        });
+        S.user = result.user;
+        syncNav();
+        toast("Profile saved. It applies from the next reply.");
+      } catch (err) { toast(err.message, "error"); }
+      setBusy("#save-account", false, "Save profile");
+    });
+  }
+
   // ------------------------------------------------------------------ room
   async function viewChat(groupId, discussionId) {
     syncNav();
@@ -1056,6 +1165,14 @@
             '<div class="field"><label for="s-purpose">Purpose</label>' +
             '<input id="s-purpose" name="purpose" type="text" value="' +
             esc(group.purpose) + '"></div>' +
+            '<div class="field"><label class="check">' +
+            '<input id="s-auto-stop" name="auto_stop" type="checkbox"' +
+            (group.auto_stop ? " checked" : "") + ">" +
+            "<span>Stop flow when replies get short</span></label>" +
+            '<p class="hint">In flow mode, ends the run once the agents are ' +
+            "only agreeing in a line or two. Switch it off to let them keep " +
+            "going until the turn cap. Agents that explicitly pass still end " +
+            "the run either way.</p></div>" +
             '<button class="btn btn--quiet" id="save-settings" type="button" ' +
             'style="margin-top:14px">Save changes</button>' +
           "</div></div></div>" +
@@ -1189,6 +1306,31 @@
       } catch (err) { toast(err.message, "error"); }
     });
 
+    // Copy one reply as the text the model actually wrote, not the rendered
+    // HTML — so Markdown and LaTeX survive being pasted elsewhere.
+    document.getElementById("transcript").addEventListener("click", async function (e) {
+      var copy = e.target.closest("[data-copy]");
+      if (!copy) return;
+      var text = live.raw[copy.dataset.copy];
+      if (!text) return;
+      try {
+        await navigator.clipboard.writeText(text);
+        copy.textContent = "Copied";
+      } catch (err) {
+        // Firefox without permission, or any non-secure context.
+        var area = document.createElement("textarea");
+        area.value = text;
+        area.style.position = "fixed";
+        area.style.opacity = "0";
+        document.body.appendChild(area);
+        area.select();
+        try { document.execCommand("copy"); copy.textContent = "Copied"; }
+        catch (fallbackError) { toast("Could not copy — select the text instead.", "error"); }
+        area.remove();
+      }
+      setTimeout(function () { copy.textContent = "Copy"; }, 1600);
+    });
+
     // Retry a failed turn, from the message itself.
     document.getElementById("transcript").addEventListener("click", async function (e) {
       var button = e.target.closest("[data-retry]");
@@ -1313,6 +1455,7 @@
     var box = document.getElementById("transcript");
     box.innerHTML = "";
     live.lastId = 0;
+    live.raw = {};
     live.status = discussion.status;
     live.mode = discussion.mode || "step";
     (discussion.messages || []).forEach(function (m) {
@@ -1352,6 +1495,7 @@
         "</div>";
     } else {
       // "turn", and "verdict" from conversations made before rooms existed.
+      live.raw[m.id] = m.content;
       node.className = "turn";
       node.innerHTML =
         '<div class="turn__who" style="--speaker:' + esc(m.color) + '">' +
@@ -1360,6 +1504,8 @@
         "<span>" + esc(m.provider) + " · " + esc(m.model) + "</span>" +
         (m.input_chars ? '<div class="turn__meta">read ' + m.input_chars +
                          " chars of the room</div>" : "") +
+        '<button class="turn__copy" type="button" data-copy="' + m.id +
+        '">Copy</button>' +
         "</div><div class='turn__body'>" + m.html + "</div>";
     }
 
@@ -1481,10 +1627,18 @@
   }
 
   document.getElementById("signout").addEventListener("click", async function () {
-    try { await api("/auth/logout", { method: "POST" }); } catch (err) { /* ignore */ }
+    try {
+      await api("/auth/logout", { method: "POST" });
+    } catch (err) {
+      toast(err.message, "error");
+      return;                       // still signed in; say so rather than pretend
+    }
     S.user = null;
-    await refreshSession();
-    go("/");
+    stopStreaming();
+    // Reload rather than re-route: it drops any open event stream, clears the
+    // in-memory state, and proves the sign-out actually took.
+    location.hash = "#/";
+    location.reload();
   });
 
   window.addEventListener("hashchange", route);

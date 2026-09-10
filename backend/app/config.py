@@ -105,6 +105,13 @@ class Config:
         self.SESSION_COOKIE_SAMESITE = "Lax"
         self.SESSION_COOKIE_SECURE = bool(security.get("session_cookie_secure", True))
         self.SESSION_COOKIE_PATH = self.URL_PREFIX or "/"
+        # Flask-Login's remember cookie defaults to "/" regardless of where the
+        # app is mounted. Keep it on the same path as the session cookie so the
+        # two are always created and destroyed together.
+        self.REMEMBER_COOKIE_PATH = self.SESSION_COOKIE_PATH
+        self.REMEMBER_COOKIE_HTTPONLY = True
+        self.REMEMBER_COOKIE_SAMESITE = "Lax"
+        self.REMEMBER_COOKIE_SECURE = self.SESSION_COOKIE_SECURE
         self.MIN_PASSWORD_LENGTH = int(security.get("min_password_length", 10))
 
         # --- database ---
@@ -132,6 +139,9 @@ class Config:
         # How many agent turns a free-running conversation takes before it
         # pauses for you. Purely a spend guard — press Resume for more.
         self.MAX_FLOW_TURNS = int(limits.get("max_flow_turns", 40))
+        # A reply shorter than this counts as the room winding down. Measured
+        # on what the model actually wrote, before any scaffolding is stripped.
+        self.CONVERGED_MIN_CHARS = int(limits.get("converged_min_chars", 260))
         # Per file, and for all files put together in one prompt. Files can
         # dwarf the conversation, so they get their own budget.
         self.MAX_FILE_CHARS = int(limits.get("max_file_chars", 200000))
@@ -146,6 +156,9 @@ class Config:
         # Send PDFs to the vendor as real documents rather than as extracted
         # text, where the vendor supports it. Keeps tables and layout.
         self.NATIVE_DOCUMENTS = bool(providers.get("native_documents", True))
+        # Guessing at which part of a reply was the model thinking out loud.
+        # Off: reasoning is separated properly at the API level instead.
+        self.STRIP_SCAFFOLDING = bool(providers.get("strip_scaffolding", False))
 
         self.FALLBACK_KEYS = {
             k: (v or "") for k, v in (providers.get("fallback_keys") or {}).items()
