@@ -41,6 +41,7 @@ from ..models import (
     Group,
     GroupMember,
     Message,
+    RoomTemplate,
 )
 from ..orchestrator import start_flow, start_turns
 from ..providers import (
@@ -157,6 +158,10 @@ def group_json(g, detail=False, message_count=None):
         "purpose": g.purpose,
         "rounds": g.rounds,
         "auto_stop": g.auto_stop,
+        "reply_style": g.reply_style,
+        "room_rules": g.room_rules,
+        "template_key": g.template_key,
+        "flow_turn_limit": g.flow_turn_limit,
         "synthesizer_agent_id": g.synthesizer_agent_id,
         "agent_count": len(g.members),
         "discussion_count": len(g.discussions),
@@ -195,6 +200,12 @@ def discussion_json(d, with_messages=False):
         data["messages"] = [m.as_dict(html=render(m.content)) for m in d.messages]
         data["files"] = [f.as_dict() for f in d.attachments]
     return data
+
+
+def _default_rules_text():
+    from ..orchestrator import default_room_rules
+
+    return default_room_rules()
 
 
 def _user_json():
@@ -238,6 +249,7 @@ def get_session():
             "max_agents_per_group": current_app.config["MAX_AGENTS_PER_GROUP"],
             "min_password_length": current_app.config.get("MIN_PASSWORD_LENGTH", 10),
         },
+        "default_room_rules": _default_rules_text(),
         "google_enabled": bool(
             current_app.config.get("GOOGLE_OAUTH", {}).get("enabled")
         ),
@@ -524,6 +536,69 @@ def delete_agent(agent_id):
 
 
 # ---------------------------------------------------------------------- groups
+@bp.get("/templates")
+@auth_required
+def list_templates():
+    """Built-in room characters, plus anything this user has saved."""
+    rows = (
+        RoomTemplate.query.filter(
+            db.or_(RoomTemplate.is_builtin.is_(True),
+                   RoomTemplate.user_id == current_user.id)
+        )
+        .order_by(RoomTemplate.sort_order, RoomTemplate.name)
+        .all()
+    )
+    return jsonify({"templates": [t.as_dict() for t in rows]})
+
+
+@bp.post("/templates")
+@auth_required
+def create_template():
+    """Save the current chat's rules and settings as a reusable template."""
+    data = body()
+    name = (data.get("name") or "").strip()
+    rules = (data.get("room_rules") or "").strip()
+    if not name:
+        return fail("Name the template.")
+    if not rules:
+        return fail("A template needs rules. Load the built-in set and edit it.")
+
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:30] or "template"
+    key = f"u{current_user.id}-{slug}"
+    existing = RoomTemplate.query.filter_by(key=key).first()
+    if existing and existing.user_id != current_user.id:
+        return fail("That name is taken. Pick another.")
+
+    template = existing or RoomTemplate(key=key, user_id=current_user.id)
+    template.name = name[:80]
+    template.description = (data.get("description") or "").strip()[:255]
+    template.room_rules = rules[:8000]
+    template.reply_style = (
+        data["reply_style"] if data.get("reply_style") in ("brief", "normal", "full")
+        else "normal"
+    )
+    template.auto_stop = bool(data.get("auto_stop", True))
+    try:
+        template.flow_turn_limit = max(0, min(int(data.get("flow_turn_limit", 40)), 500))
+    except (TypeError, ValueError):
+        template.flow_turn_limit = 40
+    template.is_builtin = False
+    db.session.add(template)
+    db.session.commit()
+    return jsonify({"template": template.as_dict()}), 201
+
+
+@bp.delete("/templates/<path:key>")
+@auth_required
+def delete_template(key):
+    template = RoomTemplate.query.filter_by(key=key).first()
+    if template is None or template.is_builtin or template.user_id != current_user.id:
+        abort(404)
+    db.session.delete(template)
+    db.session.commit()
+    return jsonify({"ok": True})
+
+
 @bp.get("/groups")
 @auth_required
 def list_groups():
@@ -568,6 +643,16 @@ def create_group():
         purpose=(data.get("purpose") or "").strip(),
         rounds=max(1, min(rounds, current_app.config["MAX_ROUNDS"])),
     )
+
+    template_key = (data.get("template") or "").strip()
+    if template_key:
+        template = RoomTemplate.query.filter_by(key=template_key).first()
+        if template and (template.is_builtin or template.user_id == current_user.id):
+            group.room_rules = template.room_rules
+            group.reply_style = template.reply_style
+            group.auto_stop = template.auto_stop
+            group.flow_turn_limit = template.flow_turn_limit
+            group.template_key = template.key
     db.session.add(group)
     db.session.commit()
     return jsonify({"group": group_json(group, detail=True)}), 201
@@ -592,6 +677,19 @@ def update_group(group_id):
         group.rounds = max(1, min(int(data["rounds"]), current_app.config["MAX_ROUNDS"]))
     if "auto_stop" in data:
         group.auto_stop = bool(data["auto_stop"])
+    if "room_rules" in data:
+        group.room_rules = (data.get("room_rules") or "").strip()[:8000]
+    if "template_key" in data:
+        group.template_key = (data.get("template_key") or "").strip()[:40]
+    if "reply_style" in data:
+        if data["reply_style"] not in ("brief", "normal", "full"):
+            return fail("Pick a reply length.")
+        group.reply_style = data["reply_style"]
+    if "flow_turn_limit" in data:
+        try:
+            group.flow_turn_limit = max(0, min(int(data["flow_turn_limit"]), 500))
+        except (TypeError, ValueError):
+            return fail("The turn limit must be a number.")
     if "synthesizer_agent_id" in data:
         chair = data["synthesizer_agent_id"]
         group.synthesizer_agent_id = int(chair) if chair else None

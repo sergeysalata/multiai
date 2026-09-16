@@ -187,6 +187,8 @@ def register_cli(app):
             ("agents", "web_search"): "sql/006_tools.sql",
             ("groups", "auto_stop"): "sql/007_flow_stop.sql",
             ("users", "about"): "sql/009_profile.sql",
+            ("groups", "reply_style"): "sql/010_room_style.sql",
+            ("groups", "template_key"): "sql/011_templates.sql",
         }
         found = set(
             db.session.execute(

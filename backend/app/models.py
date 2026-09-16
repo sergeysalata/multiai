@@ -149,6 +149,14 @@ class Group(db.Model):
     # Stop a free-running conversation when replies get short. A guess, and
     # occasionally a wrong one, so it is switchable per chat.
     auto_stop = db.Column(db.Boolean, nullable=False, default=True)
+    # "brief" | "normal" | "full" — an instruction, not a token ceiling.
+    reply_style = db.Column(db.String(16), nullable=False, default="normal")
+    # Flow turns per run before it pauses. 0 means no cap.
+    flow_turn_limit = db.Column(db.Integer, nullable=False, default=40)
+    # Replaces the built-in behaviour rules for this chat. Empty = default.
+    room_rules = db.Column(db.Text, nullable=False, default="")
+    # Which template this chat was made from, for the settings page.
+    template_key = db.Column(db.String(40), nullable=False, default="")
     synthesizer_agent_id = db.Column(
         db.Integer, db.ForeignKey("agents.id", ondelete="SET NULL"), nullable=True
     )
@@ -189,6 +197,39 @@ class GroupMember(db.Model):
 
     group = db.relationship("Group", back_populates="members")
     agent = db.relationship("Agent", back_populates="memberships")
+
+
+class RoomTemplate(db.Model):
+    """A room's character: behaviour rules plus the settings that suit them."""
+
+    __tablename__ = "room_templates"
+
+    id = db.Column(db.Integer, primary_key=True)
+    key = db.Column(db.String(40), unique=True, nullable=False)
+    user_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=True
+    )
+    name = db.Column(db.String(80), nullable=False)
+    description = db.Column(db.String(255), nullable=False, default="")
+    room_rules = db.Column(db.Text, nullable=False)
+    reply_style = db.Column(db.String(16), nullable=False, default="normal")
+    auto_stop = db.Column(db.Boolean, nullable=False, default=True)
+    flow_turn_limit = db.Column(db.Integer, nullable=False, default=40)
+    is_builtin = db.Column(db.Boolean, nullable=False, default=False)
+    sort_order = db.Column(db.Integer, nullable=False, default=100)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+
+    def as_dict(self):
+        return {
+            "key": self.key,
+            "name": self.name,
+            "description": self.description,
+            "room_rules": self.room_rules,
+            "reply_style": self.reply_style,
+            "auto_stop": self.auto_stop,
+            "flow_turn_limit": self.flow_turn_limit,
+            "is_builtin": self.is_builtin,
+        }
 
 
 class Discussion(db.Model):

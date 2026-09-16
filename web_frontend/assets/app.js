@@ -21,6 +21,7 @@
     suggested: {},
     limits: { max_rounds: 4, max_agents_per_group: 6, min_password_length: 10 },
     googleEnabled: false,
+    templates: null,
   };
 
   var live = {
@@ -496,8 +497,17 @@
             '<input id="name" name="name" type="text" placeholder="Architecture review"></div>' +
             '<div class="field"><label for="purpose">What this chat is for</label>' +
             '<input id="purpose" name="purpose" type="text" placeholder="Optional"></div>' +
-            '<p class="hint">A chat is a room of agents that stays together. Open it ' +
-            "and start talking — there is no round limit and no fixed ending.</p>" +
+            '<div class="field"><label for="template">Room character</label>' +
+            '<select id="template" name="template">' +
+              '<option value="">Default — general discussion</option>' +
+              (S.templates || []).map(function (t) {
+                return '<option value="' + esc(t.key) + '">' + esc(t.name) +
+                  "</option>";
+              }).join("") +
+            "</select>" +
+            '<p class="hint" id="template-hint">How the room behaves: how blunt ' +
+            "the agents are, how long they talk, when they stop. Editable later " +
+            "in chat settings.</p></div>" +
             '<button class="btn btn--primary" id="create-group" type="button" ' +
             'style="margin-top:14px">Create chat</button>' +
           "</div></div></div>" +
@@ -529,6 +539,17 @@
           button.disabled = false;
         }
       });
+    });
+
+    on("#template", "change", function () {
+      var key = document.getElementById("template").value;
+      var chosen = (S.templates || []).filter(function (t) {
+        return t.key === key;
+      })[0];
+      document.getElementById("template-hint").textContent = chosen
+        ? chosen.description
+        : "How the room behaves: how blunt the agents are, how long they talk, " +
+          "when they stop. Editable later in chat settings.";
     });
 
     on("#create-group", "click", async function () {
@@ -1165,14 +1186,73 @@
             '<div class="field"><label for="s-purpose">Purpose</label>' +
             '<input id="s-purpose" name="purpose" type="text" value="' +
             esc(group.purpose) + '"></div>' +
+            '<div class="field"><label for="s-template">Room character</label>' +
+            '<div class="inline-form">' +
+            '<select id="s-template">' +
+              '<option value="">Choose a template…</option>' +
+              (S.templates || []).map(function (t) {
+                return '<option value="' + esc(t.key) + '"' +
+                  (group.template_key === t.key ? " selected" : "") + ">" +
+                  esc(t.name) + "</option>";
+              }).join("") +
+            "</select>" +
+            '<button class="btn btn--quiet" id="apply-template" type="button">Apply</button>' +
+            "</div>" +
+            '<p class="hint" id="s-template-hint">' +
+            (group.template_key ? "" : "Applying a template replaces the rules and " +
+             "settings below. Nothing is saved until you press Save changes.") +
+            "</p></div>" +
+
+            '<div class="field"><label for="s-reply-style">Reply length</label>' +
+            '<select id="s-reply-style" name="reply_style">' +
+              ['brief', 'normal', 'full'].map(function (v) {
+                var labels = {
+                  brief: "Brief — one point, under 120 words",
+                  normal: "Normal — a few paragraphs",
+                  full: "Full — as long as the problem needs",
+                };
+                return '<option value="' + v + '"' +
+                  ((group.reply_style || "normal") === v ? " selected" : "") +
+                  ">" + labels[v] + "</option>";
+              }).join("") +
+            "</select>" +
+            '<p class="hint">Set by instruction, not by cutting the reply off. ' +
+            "Brief is worth trying: every reply is re-read by every other agent, " +
+            "so long turns cost money on each turn that follows.</p></div>" +
+
+            '<div class="field"><label for="s-flow-limit">Flow turn limit</label>' +
+            '<input id="s-flow-limit" name="flow_turn_limit" type="number" ' +
+            'min="0" max="500" value="' +
+            (group.flow_turn_limit === undefined ? 40 : group.flow_turn_limit) +
+            '">' +
+            '<p class="hint">How many turns a free-running conversation takes ' +
+            "before it pauses. <strong>0 means no limit</strong> — it then runs " +
+            "until the room stops itself or you press Stop, and spends money " +
+            "the whole time.</p></div>" +
+
             '<div class="field"><label class="check">' +
             '<input id="s-auto-stop" name="auto_stop" type="checkbox"' +
             (group.auto_stop ? " checked" : "") + ">" +
             "<span>Stop flow when replies get short</span></label>" +
-            '<p class="hint">In flow mode, ends the run once the agents are ' +
-            "only agreeing in a line or two. Switch it off to let them keep " +
-            "going until the turn cap. Agents that explicitly pass still end " +
-            "the run either way.</p></div>" +
+            '<p class="hint">Ends a run once the agents are only agreeing in a ' +
+            "line or two. Agents that explicitly pass end the run either way.</p></div>" +
+
+            '<div class="field"><label for="s-room-rules">Room rules</label>' +
+            '<textarea id="s-room-rules" name="room_rules" rows="10" ' +
+            'spellcheck="false" placeholder="Using the built-in rules. Edit to ' +
+            'replace them for this chat.">' + esc(group.room_rules || "") +
+            "</textarea>" +
+            '<div class="rules-actions">' +
+              '<button class="linklike" id="load-default-rules" type="button">' +
+              "Load the built-in rules to edit</button>" +
+              '<button class="linklike" id="clear-rules" type="button">' +
+              "Reset to built-in</button>" +
+              '<button class="linklike" id="save-template" type="button">' +
+              "Save as template</button>" +
+            "</div>" +
+            '<p class="hint">What every agent is told about how to behave, on ' +
+            "every turn. Leave empty to use the built-in set. The reply-length " +
+            "line above is always appended, so it keeps working either way.</p></div>" +
             '<button class="btn btn--quiet" id="save-settings" type="button" ' +
             'style="margin-top:14px">Save changes</button>' +
           "</div></div></div>" +
@@ -1285,10 +1365,72 @@
       });
     });
 
+    on("#s-template", "change", function () {
+      var chosen = (S.templates || []).filter(function (t) {
+        return t.key === document.getElementById("s-template").value;
+      })[0];
+      document.getElementById("s-template-hint").textContent = chosen
+        ? chosen.description
+        : "";
+    });
+
+    on("#apply-template", "click", function () {
+      var key = document.getElementById("s-template").value;
+      var chosen = (S.templates || []).filter(function (t) {
+        return t.key === key;
+      })[0];
+      if (!chosen) return toast("Pick a template first.", "error");
+      if (document.getElementById("s-room-rules").value.trim() &&
+          !confirm("Replace this chat's rules and settings with \"" +
+                   chosen.name + "\"?")) return;
+
+      document.getElementById("s-room-rules").value = chosen.room_rules;
+      document.getElementById("s-reply-style").value = chosen.reply_style;
+      document.getElementById("s-flow-limit").value = chosen.flow_turn_limit;
+      document.getElementById("s-auto-stop").checked = chosen.auto_stop;
+      toast("Loaded " + chosen.name + ". Press Save changes to apply it.");
+    });
+
+    on("#save-template", "click", async function () {
+      var name = prompt("Name this template:");
+      if (!name) return;
+      try {
+        var result = await api("/templates", {
+          method: "POST",
+          data: {
+            name: name,
+            description: "",
+            room_rules: document.getElementById("s-room-rules").value ||
+                        S.defaultRoomRules,
+            reply_style: document.getElementById("s-reply-style").value,
+            auto_stop: document.getElementById("s-auto-stop").checked,
+            flow_turn_limit: Number(document.getElementById("s-flow-limit").value),
+          },
+        });
+        S.templates = null;
+        await refreshSession();
+        toast('Saved as "' + result.template.name + '".');
+      } catch (err) { toast(err.message, "error"); }
+    });
+
+    on("#load-default-rules", "click", function () {
+      var box = document.getElementById("s-room-rules");
+      if (box.value.trim() &&
+          !confirm("Replace what is in the box with the built-in rules?")) return;
+      box.value = S.defaultRoomRules || "";
+      box.focus();
+    });
+
+    on("#clear-rules", "click", function () {
+      document.getElementById("s-room-rules").value = "";
+    });
+
     on("#save-settings", "click", async function () {
       setBusy("#save-settings", true, "Saving…");
       try {
-        await api("/groups/" + groupId, { method: "PATCH", data: form("settings-form") });
+        var settings = form("settings-form");
+        settings.template_key = document.getElementById("s-template").value;
+        await api("/groups/" + groupId, { method: "PATCH", data: settings });
         toast("Chat updated.");
         viewChat(groupId, live.discussionId);
       } catch (err) {
@@ -1623,6 +1765,12 @@
     S.suggested = data.suggested_models || {};
     S.limits = data.limits || S.limits;
     S.googleEnabled = !!data.google_enabled;
+    S.defaultRoomRules = data.default_room_rules || "";
+    if (S.user && !S.templates) {
+      try {
+        S.templates = (await api("/templates")).templates || [];
+      } catch (err) { S.templates = []; }
+    }
     syncNav();
   }
 

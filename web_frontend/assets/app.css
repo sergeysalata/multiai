@@ -603,3 +603,10 @@ label.check input { width: auto; margin: 0; }
 @media (prefers-reduced-motion: reduce) {
   .chat-state[data-state="running"] i { animation: none; }
 }
+
+/* ---------------------------------------------------------- room rules --- */
+#s-room-rules {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: .8rem; line-height: 1.5;
+}
+.rules-actions { display: flex; gap: 14px; margin-top: 6px; }

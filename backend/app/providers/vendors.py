@@ -1,3 +1,4 @@
+import re
 import time
 
 from ..text_cleanup import clean as clean_output
@@ -13,6 +14,18 @@ from .base import BaseProvider, ProviderError
 # The first turn of a debate pays one wasted call; every later turn is clean.
 # ---------------------------------------------------------------------------
 _REJECTED = set()
+
+# Learned per model: the largest number of output tokens it will accept.
+_CEILINGS = {}
+
+
+def _ceiling_from(error):
+    """Pull the real limit out of a "maximum allowed output tokens" error."""
+    text = str(error)
+    if "maximum" not in text.lower():
+        return None
+    numbers = [int(n) for n in re.findall(r"\b(\d{3,6})\b", text)]
+    return min(numbers) if numbers else None
 
 
 def _rejects(provider_key, model, parameter):
@@ -36,6 +49,11 @@ class AnthropicProvider(BaseProvider):
 
     supports_documents = True
 
+    # Anthropic requires max_tokens. With no way to say "the model's own
+    # maximum", ask for a high number and learn the real ceiling from the
+    # error, which names it.
+    AUTO_MAX_TOKENS = 32000
+
     WEB_SEARCH_TOOL = {
         "type": "web_search_20250305",
         "name": "web_search",
@@ -55,7 +73,7 @@ class AnthropicProvider(BaseProvider):
                 "" if use_docs else document_fallback,
                 cache_prefix,
             ),
-            "max_tokens": max_tokens,
+            "max_tokens": self._budget(max_tokens),
         }
         if use_search:
             payload["tools"] = [self.WEB_SEARCH_TOOL]
@@ -79,6 +97,12 @@ class AnthropicProvider(BaseProvider):
             if _mentions(exc, "temperature") and "temperature" in payload:
                 _remember_rejection(self.key, self.model, "temperature")
                 payload.pop("temperature")
+                retry = True
+            elif _ceiling_from(exc) and not _CEILINGS.get((self.key, self.model)):
+                # "max_tokens: 32000 > 8192, which is the maximum…" — the error
+                # names the real limit, so take it and never ask for more.
+                _CEILINGS[(self.key, self.model)] = _ceiling_from(exc)
+                payload["max_tokens"] = self._budget(max_tokens)
                 retry = True
             elif use_search and _mentions(exc, "web_search", "tool", "tools"):
                 _remember_rejection(self.key, self.model, "web_search")
@@ -126,8 +150,25 @@ class AnthropicProvider(BaseProvider):
         }
 
         if not text:
+            if data.get("stop_reason") == "max_tokens" and not _rejects(
+                self.key, self.model, "small_budget"
+            ):
+                _remember_rejection(self.key, self.model, "small_budget")
+                return self.complete(
+                    system, messages, temperature, max_tokens,
+                    documents, document_fallback, cache_prefix, web_search,
+                )
             raise ProviderError(self._explain_empty(blocks, data, max_tokens))
         return text
+
+    def _budget(self, max_tokens):
+        """How many output tokens to ask for."""
+        learned = _CEILINGS.get((self.key, self.model))
+        if not max_tokens:
+            return learned or self.AUTO_MAX_TOKENS
+        if _rejects(self.key, self.model, "small_budget"):
+            max_tokens = min(max(max_tokens * 4, 8000), 32000)
+        return min(max_tokens, learned) if learned else max_tokens
 
     @staticmethod
     def _messages(messages, documents, fallback_text, cache_prefix=""):
@@ -221,10 +262,17 @@ class OpenAIProvider(BaseProvider):
         # rather than guessed from the model name, which ages badly.
         if not _rejects(self.key, self.model, "temperature"):
             payload["temperature"] = temperature
-        if _rejects(self.key, self.model, "max_tokens"):
-            payload["max_completion_tokens"] = max_tokens
-        else:
-            payload["max_tokens"] = max_tokens
+        if max_tokens:
+            if _rejects(self.key, self.model, "small_budget"):
+                # Already ran out of room once; do not make the user pay for
+                # that discovery on every turn.
+                max_tokens = min(max(max_tokens * 4, 8000), 32000)
+            if _rejects(self.key, self.model, "max_tokens"):
+                payload["max_completion_tokens"] = max_tokens
+            else:
+                payload["max_tokens"] = max_tokens
+        # No cap set: the parameter is optional here, so leave it out and let
+        # the model use its own maximum.
         if use_search:
             payload["web_search_options"] = {}
 
@@ -236,8 +284,10 @@ class OpenAIProvider(BaseProvider):
 
         attempts = []
         last_error = None
-        # One attempt per parameter that might be refused, plus one to succeed.
-        for _ in range(5):
+        escalated = False
+        # One attempt per parameter that might be refused, plus one to succeed,
+        # plus one for a reasoning model that needs a bigger budget.
+        for _ in range(6):
             attempts.append(
                 "+".join(
                     k for k in ("web_search_options", "temperature",
@@ -306,13 +356,26 @@ class OpenAIProvider(BaseProvider):
         if not text:
             reasoning = self.last_meta.get("reasoning_tokens")
             if finish == "length":
-                return_msg = (
-                    f"{self.label} used its whole {max_tokens}-token budget "
+                # A reasoning model can spend the whole budget thinking. Rather
+                # than failing the turn and asking the user to go and change a
+                # setting, try once more with room to actually answer.
+                if not escalated and not _rejects(
+                    self.key, self.model, "small_budget"
+                ):
+                    escalated = True
+                    _remember_rejection(self.key, self.model, "small_budget")
+                    return self.complete(
+                        system, messages, temperature, max_tokens,
+                        documents, document_fallback, cache_prefix, web_search,
+                    )
+                raise ProviderError(
+                    f"{self.label} used its whole "
+                    f"{max_tokens or 'available'}-token budget "
                     f"without producing an answer"
                     + (f" ({reasoning} tokens went to reasoning)" if reasoning else "")
-                    + ". Raise 'Max tokens per turn' on this agent."
+                    + ". Raise 'Max tokens per turn' on this agent — a "
+                    "reasoning model needs room to think and then write."
                 )
-                raise ProviderError(return_msg)
             if finish == "content_filter":
                 raise ProviderError(f"{self.label} blocked that on content policy.")
             raise ProviderError(
@@ -385,10 +448,10 @@ class GeminiProvider(BaseProvider):
             )
             body = {
                 "contents": contents,
-                "generationConfig": {
-                    "temperature": temperature,
-                    "maxOutputTokens": max_tokens,
-                },
+                "generationConfig": _generation_config(
+                    temperature, max_tokens,
+                    _rejects(self.key, self.model, "small_budget"),
+                ),
             }
             if use_system:
                 body["systemInstruction"] = {"parts": [{"text": system}]}
@@ -486,7 +549,13 @@ class GeminiProvider(BaseProvider):
 
         if not produced.strip() and thinking.strip():
             # Everything it produced was reasoning: the budget ran out before
-            # it wrote an answer. Say that rather than showing the scratchpad.
+            # it wrote an answer. Give it room once rather than failing the turn.
+            if not _rejects(self.key, self.model, "small_budget"):
+                _remember_rejection(self.key, self.model, "small_budget")
+                return self.complete(
+                    system, messages, temperature, max_tokens,
+                    documents, document_fallback, cache_prefix, web_search,
+                )
             raise ProviderError(
                 f"Gemini spent its whole {max_tokens}-token budget thinking and "
                 "never wrote an answer. Raise 'Max tokens per turn' on this agent."
@@ -496,6 +565,16 @@ class GeminiProvider(BaseProvider):
         if not text:
             raise ProviderError("Gemini returned an empty reply.")
         return text
+
+
+def _generation_config(temperature, max_tokens, escalate):
+    config = {"temperature": temperature}
+    if max_tokens:
+        config["maxOutputTokens"] = (
+            min(max(max_tokens * 4, 8000), 32000) if escalate else max_tokens
+        )
+    # Otherwise omitted: Gemini then uses the model's own output limit.
+    return config
 
 
 def _gemini_contents(messages, documents, fallback_text, inline_system=""):

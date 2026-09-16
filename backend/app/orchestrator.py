@@ -54,12 +54,55 @@ ROOM_RULES = (
     "'Context:' or 'Goal:'. Start with the first word you actually want to "
     "say.\n"
     "- No preamble, no restating the question, no summing up unless asked.\n"
-    "- Keep it to a few paragraphs unless the problem genuinely needs more.\n"
+    "{length}\n"
     "- Write every formula, variable and symbol in LaTeX: $x_{ij}$ inline, "
     "\\[ ... \\] for a displayed equation. The room renders it properly. "
     "Do not write maths as plain text with underscores and Unicode operators "
     "like |v_j - v_i| <= M — it comes out unreadable."
 )
+
+# Length is set by instruction rather than by a token ceiling: a ceiling
+# truncates a reply mid-sentence, an instruction makes the model decide what to
+# leave out. "Brief" is deliberately blunt — models treat "concise" as a
+# suggestion and a word count as a rule.
+REPLY_STYLES = {
+    "brief": (
+        "- Hard limit: 120 words. One point, made well, then stop. No lists, "
+        "no headings, no restating the question, no summarising what others "
+        "said. If you cannot make the point in 120 words, make the most "
+        "important part of it and say what you are leaving out."
+    ),
+    "normal": (
+        "- Keep it to a few paragraphs unless the problem genuinely needs more."
+    ),
+    "full": (
+        "- Take the space the problem needs. Depth is welcome; padding is not."
+    ),
+}
+
+
+def default_room_rules(style="normal"):
+    # Plain replace, not str.format: the rules contain LaTeX like $x_{ij}$,
+    # and format() would read {ij} as a placeholder.
+    return ROOM_RULES.replace(
+        "{length}", REPLY_STYLES.get(style, REPLY_STYLES["normal"])
+    )
+
+
+def room_rules_for(discussion):
+    """The behaviour instructions this chat's agents receive.
+
+    A chat can replace them outright. The length line is appended to a custom
+    set rather than inserted, so the reply-length control keeps working
+    whatever someone writes here.
+    """
+    group = discussion.group
+    style = getattr(group, "reply_style", "normal") or "normal"
+    custom = (getattr(group, "room_rules", "") or "").strip()
+    if not custom:
+        return default_room_rules(style)
+    return custom + "\n" + REPLY_STYLES.get(style, REPLY_STYLES["normal"])
+
 
 _CAPABILITIES_HEAD = (
     "What you can and cannot do in this room, so you do not have to guess:\n"
@@ -280,7 +323,7 @@ def build_agent_input(agent, discussion, messages, limit_chars, note=""):
         f"Your name in this room is {agent.name}."
         + (f" Your role here: {agent.role}." if agent.role else "")
         + f"\nAlso in the room: {roster}."
-        + f"\n\n{ROOM_RULES}"
+        + f"\n\n{room_rules_for(discussion)}"
         + f"\n\n{capabilities_for(agent)}"
         + human_context(discussion)
         + (f"\n\nAdditional instructions from your operator:\n{persona}" if persona else "")
@@ -557,7 +600,11 @@ def run_flow(app, discussion_id):
         if discussion is None:
             return
         cfg = app.config
-        cap = cfg.get("MAX_FLOW_TURNS", 40)
+        # Per chat, falling back to the config default. 0 means run until the
+        # room stops itself or you press Stop.
+        cap = discussion.group.flow_turn_limit
+        if cap is None:
+            cap = cfg.get("MAX_FLOW_TURNS", 40)
 
         try:
             discussion.status = "running"
@@ -570,7 +617,7 @@ def run_flow(app, discussion_id):
             consecutive_passes = 0
             consecutive_short = 0
 
-            while taken < cap:
+            while cap <= 0 or taken < cap:
                 if _cancelled(discussion):
                     _rest(discussion, "Stopped by you")
                     return
